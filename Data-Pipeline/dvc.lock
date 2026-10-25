@@ -1,0 +1,176 @@
+schema: '2.0'
+stages:
+  harmonize:
+    cmd: python -m scripts.preprocess.harmonize
+    deps:
+    - path: ../configs/harmonization.yaml
+      hash: md5
+      md5: c42ae6d2c0c44a7d85b7106a68d48e17
+      size: 2901
+    - path: ../configs/urgency_mapping.yaml
+      hash: md5
+      md5: bd71a07ef37310afdddd9920b7bae575
+      size: 1408
+    - path: data/raw
+      hash: md5
+      md5: fe3f9f9868064874ea2bb88691ec44ce.dir
+      size: 10634273947
+      nfiles: 26214
+    - path: scripts/preprocess/harmonize.py
+      hash: md5
+      md5: 46cfefb7b73a9c9e5952c7b7bea11856
+      size: 10498
+    outs:
+    - path: data/interim/harmonized.csv
+      hash: md5
+      md5: 9e56f849d448af6f7746e8cc55662744
+      size: 5258834
+  image_stats:
+    cmd: python -m scripts.preprocess.image_stats
+    deps:
+    - path: data/interim/harmonized.csv
+      hash: md5
+      md5: 9e56f849d448af6f7746e8cc55662744
+      size: 5258834
+    - path: data/raw
+      hash: md5
+      md5: fe3f9f9868064874ea2bb88691ec44ce.dir
+      size: 10634273947
+      nfiles: 26214
+    - path: scripts/preprocess/image_stats.py
+      hash: md5
+      md5: c569468db6bd5dd40633941ee2d030f5
+      size: 4587
+    outs:
+    - path: data/interim/image_stats.csv
+      hash: md5
+      md5: 3da903c9449ebab58b983c27a457b2a8
+      size: 2959842
+  quality:
+    cmd: python -m scripts.preprocess.quality
+    deps:
+    - path: data/interim/harmonized.csv
+      hash: md5
+      md5: 9e56f849d448af6f7746e8cc55662744
+      size: 5258834
+    - path: data/interim/image_stats.csv
+      hash: md5
+      md5: 3da903c9449ebab58b983c27a457b2a8
+      size: 2959842
+    - path: scripts/preprocess/quality.py
+      hash: md5
+      md5: 78f039d41ca237ced67442130ca769c2
+      size: 3706
+    params:
+      params.yaml:
+        preprocess.quality:
+          min_side_px: 128
+          min_brightness: 30
+          max_brightness: 240
+          min_contrast: 4
+          min_sharpness: 2.0
+    outs:
+    - path: data/interim/quality_dropped.csv
+      hash: md5
+      md5: ae6a0cbdaebf5cb7291a28dcbeee53cf
+      size: 272
+    - path: data/interim/quality_passed.csv
+      hash: md5
+      md5: 63e67e89eac52fb56e936edb75177888
+      size: 7539460
+  dedupe:
+    cmd: python -m scripts.preprocess.dedupe
+    deps:
+    - path: data/interim/quality_passed.csv
+      hash: md5
+      md5: 63e67e89eac52fb56e936edb75177888
+      size: 7539460
+    - path: scripts/preprocess/dedupe.py
+      hash: md5
+      md5: 51614c899f6c651efeb3479a53e68546
+      size: 6791
+    params:
+      params.yaml:
+        preprocess.dedupe:
+          max_hamming_distance: 4
+          source_priority:
+          - ham10000
+          - isic
+          - pad_ufes_20
+          - fitzpatrick17k
+    outs:
+    - path: data/interim/deduped.csv
+      hash: md5
+      md5: fb97d550b1e9fc505f3d2999551c3e45
+      size: 7933524
+    - path: data/interim/duplicates_dropped.csv
+      hash: md5
+      md5: a804f1436b82b456db60f10dd19f8f94
+      size: 305993
+  transform:
+    cmd: python -m scripts.preprocess.transform
+    deps:
+    - path: data/interim/deduped.csv
+      hash: md5
+      md5: fb97d550b1e9fc505f3d2999551c3e45
+      size: 7933524
+    - path: data/raw
+      hash: md5
+      md5: fe3f9f9868064874ea2bb88691ec44ce.dir
+      size: 10634273947
+      nfiles: 26214
+    - path: scripts/preprocess/transform.py
+      hash: md5
+      md5: 3860c3a7d679f8600c0488b552c93c33
+      size: 6063
+    params:
+      params.yaml:
+        preprocess.transform:
+          image_size: 384
+          jpeg_quality: 92
+          color_constancy_power: 6
+          age_bins:
+          - 0
+          - 30
+          - 45
+          - 60
+          - 75
+          - 120
+    outs:
+    - path: data/interim/features.csv
+      hash: md5
+      md5: b855dec5bdb0c01863e22eceb126e5da
+      size: 2205450
+    - path: data/processed/images
+      hash: md5
+      md5: 73049958a38ddf029c0e92a702c8a85c.dir
+      size: 866951023
+      nfiles: 25300
+  split:
+    cmd: python -m scripts.preprocess.split
+    deps:
+    - path: data/interim/deduped.csv
+      hash: md5
+      md5: fb97d550b1e9fc505f3d2999551c3e45
+      size: 7933524
+    - path: data/interim/features.csv
+      hash: md5
+      md5: b855dec5bdb0c01863e22eceb126e5da
+      size: 2205450
+    - path: scripts/preprocess/split.py
+      hash: md5
+      md5: 9e6ea0c6b718fcaca16342479bf93b9d
+      size: 4823
+    params:
+      params.yaml:
+        preprocess.split:
+          ratios:
+            train: 0.7
+            val: 0.15
+            test: 0.15
+        seed: 42
+    outs:
+    - path: data/processed/dataset.csv
+      hash: md5
+      md5: 0ffb7abbc288fefbc0d8edc355b14f9e
+      size: 10599735

@@ -1,0 +1,4 @@
+# Local development and CI: pipeline dependencies plus test and lint tools.
+-r requirements.txt
+pytest==9.1.1
+flake8==7.4.1

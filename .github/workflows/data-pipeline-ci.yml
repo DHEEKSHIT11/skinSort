@@ -1,0 +1,25 @@
+# Lint and unit-test the data pipeline on every push and pull request.
+name: data-pipeline-ci
+
+on:
+  push:
+    paths: ["Data-Pipeline/**", ".github/workflows/data-pipeline-ci.yml"]
+  pull_request:
+    paths: ["Data-Pipeline/**", ".github/workflows/data-pipeline-ci.yml"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Data-Pipeline
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: Data-Pipeline/requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - run: flake8 .
+      - run: pytest -v

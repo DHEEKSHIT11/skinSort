@@ -1,0 +1,115 @@
+# SkinSort data pipeline parameters.
+# Every tunable value lives here so changing a setting never means editing code.
+# DVC tracks this file, so each data version records the parameters it was built with.
+
+seed: 42
+
+paths:
+  raw: data/raw
+  interim: data/interim          # intermediate tables between preprocessing steps
+  processed: data/processed      # final images + dataset.csv used for training
+  logs: logs
+  # Shared with training/serving, so they live in the repo-level configs/ folder.
+  urgency_mapping: ../configs/urgency_mapping.yaml
+  harmonization: ../configs/harmonization.yaml
+
+http:
+  timeout_seconds: 60
+  max_retries: 5
+  backoff_factor: 1.0
+  user_agent: "SkinSort-DataPipeline/0.1 (Northeastern IE7374 academic project)"
+
+ingest:
+  isic:
+    api_url: https://api.isic-archive.com/api/v2/images/search/
+    # "full" = original resolution, "thumbnail_256" = 256px previews (much smaller).
+    image_variant: full
+    page_size: 100
+    max_workers: 16
+    # Fail the task if more than this share of images cannot be downloaded.
+    max_failure_rate: 0.01
+    # The archive is too large to pull whole, so we take a capped number of
+    # images per diagnosis group. Urgent groups are over-sampled on purpose
+    # because they are rare. The exact image IDs are saved in metadata.csv,
+    # and DVC freezes that file, so every teammate trains on the same subset.
+    strata:
+      - name: melanoma
+        query: 'image_type:dermoscopic AND diagnosis_2:"Malignant melanocytic proliferations (Melanoma)"'
+        max_images: 2000
+      - name: squamous_cell_carcinoma
+        query: 'image_type:dermoscopic AND diagnosis_2:"Malignant epidermal proliferations"'
+        max_images: 1500
+      - name: basal_cell_carcinoma
+        query: 'image_type:dermoscopic AND diagnosis_3:"Basal cell carcinoma"'
+        max_images: 1500
+      - name: actinic_keratosis
+        query: 'image_type:dermoscopic AND diagnosis_3:"Solar or actinic keratosis"'
+        max_images: 1000
+      - name: benign
+        query: 'image_type:dermoscopic AND diagnosis_1:Benign'
+        max_images: 4000
+
+  ham10000:
+    dataverse_url: https://dataverse.harvard.edu
+    doi: doi:10.7910/DVN/DBW86T
+    files:
+      - HAM10000_metadata.tab
+      - HAM10000_images_part_1.zip
+      - HAM10000_images_part_2.zip
+    keep_archives: false
+
+  pad_ufes_20:
+    mendeley_api_url: https://data.mendeley.com/public-api/datasets
+    dataset_id: zr7vgbcyr2
+    version: 1
+    keep_archives: false
+
+  fitzpatrick17k:
+    csv_url: https://raw.githubusercontent.com/mattgroh/fitzpatrick17k/main/fitzpatrick17k.csv
+    max_workers: 16
+    # Images are hosted on two third-party atlases. As of Oct 2026 dermaamin.com
+    # (~12.6k rows, 76%) returns 404 for every image; atlasdermatologico.com.br
+    # (~3.9k rows) still works and its MD5 hashes match the CSV. Below this
+    # share of successful downloads the task fails.
+    min_success_rate: 0.2
+    # Pipeline optimisation (found with the Airflow Gantt chart): links that
+    # returned 404 on a previous run are not retried. First run: 41.6 min.
+    skip_known_404: true
+
+preprocess:
+  # Parallel worker processes for image work (0 = one per CPU core).
+  workers: 0
+
+  quality:
+    # Images failing any of these checks are dropped and counted in the quality report.
+    # Calibrated on the first full run (26,200 images, Oct 2026): the per-dataset
+    # percentiles are in logs/quality_report.json. Visual check: the lowest-scoring
+    # images (sharpness ~3, contrast ~18) are soft but the lesion is still clearly
+    # visible, because smooth dermoscopic skin has little texture. Thresholds are
+    # therefore set to catch only genuinely broken images, not to trim soft ones.
+    min_side_px: 128           # shorter side smaller than this is unusable (min seen: 147)
+    min_brightness: 30         # mean grey level 0-255; below = too dark (min seen: 33.7)
+    max_brightness: 240        # above = blown out (max seen: 229.9)
+    min_contrast: 4            # grey-level std; near 0 = blank/flat image (min seen: 5.2)
+    min_sharpness: 2.0         # variance of the Laplacian on a 512px copy (min seen: 2.9)
+
+  dedupe:
+    # Images whose perceptual hashes differ by <= this many bits (of 64) are
+    # treated as the same photo. Exact copies are dropped; near-copies are
+    # kept but forced into the same split so they cannot leak between sets.
+    max_hamming_distance: 4
+    # When an exact copy exists in two datasets, keep the first listed.
+    source_priority: [ham10000, isic, pad_ufes_20, fitzpatrick17k]
+
+  transform:
+    image_size: 384            # output images are image_size x image_size
+    jpeg_quality: 92
+    # Shades-of-Gray colour constancy (Finlayson & Trezzi 2004): reduces colour
+    # casts from different lighting and cameras. p=6 is the usual setting.
+    color_constancy_power: 6
+    age_bins: [0, 30, 45, 60, 75, 120]
+
+  split:
+    # Applied separately to the dermoscopic pool (ISIC + HAM10000) and to
+    # PAD-UFES-20. Fitzpatrick17k is never trained on: all of it is fairness_test.
+    ratios: {train: 0.70, val: 0.15, test: 0.15}
