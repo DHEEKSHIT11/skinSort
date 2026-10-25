@@ -1,0 +1,5 @@
+[core]
+    remote = gcs
+    autostage = true
+['remote "gcs"']
+    url = gs://skinsort-data-asdr/dvc-store

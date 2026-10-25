@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Secrets and credentials (never commit)
+# - environment files (Airflow password, JWT secret, Slack webhook, SMTP login)
+.env
+.env.*
+!.env.example
+# - Google Cloud service-account keys and gcloud login files
+*-sa.json
+*service-account*.json
+*service_account*.json
+*credentials*.json
+application_default_credentials.json
+.config/gcloud/
+# - private keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+# - DVC per-machine settings (can hold remote credentials)
+.dvc/config.local
+# - Airflow runtime config generated with secrets inside
+Data-Pipeline/config/airflow.cfg
+# - anything explicitly named secret
+*secret*
+!**/*secret*.py
+
+# Data lives in GCS and is tracked by DVC, not Git
+Data-Pipeline/data/raw/
+Data-Pipeline/data/interim/
+Data-Pipeline/data/processed/
+
+# Runtime logs (keep the folder itself)
+Data-Pipeline/logs/*
+!Data-Pipeline/logs/.gitkeep
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,28 @@
+# Canonical diagnosis -> urgency tier (routine / priority / urgent).
+#
+# DRAFT (see scoping doc 3.2): must be checked against a published clinical
+# source before the final submission. Every model records which version of
+# this file it was trained on (DVC tracks it as a pipeline dependency).
+#
+# Every canonical diagnosis produced by configs/harmonization.yaml must appear
+# here; the pipeline fails if one is missing, so nothing is silently unlabelled.
+
+version: 0.1-draft
+
+tiers: [routine, priority, urgent]
+
+mapping:
+  melanoma: urgent             # most dangerous skin cancer; delay changes the outcome
+  squamous_cell_carcinoma: urgent  # can spread; needs prompt review
+  other_malignant: urgent      # e.g. Kaposi sarcoma, mycosis fungoides (Fitzpatrick17k only)
+  basal_cell_carcinoma: priority   # cancer, but slow-growing and rarely spreads
+  actinic_keratosis: priority  # can turn into cancer; should be checked soon
+  # HAM10000 "akiec" lumps actinic keratosis with Bowen's disease (SCC in situ)
+  # and cannot be separated; kept at priority. Flag for clinical review.
+  actinic_keratosis_or_bowen: priority
+  nevus: routine
+  benign_keratosis: routine    # seborrheic keratosis, solar lentigo, lichen-planus-like keratosis
+  dermatofibroma: routine
+  vascular_lesion: routine
+  other_benign: routine
+  non_neoplastic: routine      # inflammatory / infectious conditions (Fitzpatrick17k only)

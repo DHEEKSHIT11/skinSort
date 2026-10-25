@@ -1,0 +1,58 @@
+# How each dataset's own labels map onto SkinSort's common schema.
+# Rules are checked top to bottom; the first match wins.
+
+diagnosis:
+  isic:
+    # field: ISIC metadata column, contains: case-insensitive substring
+    rules:
+      - {field: diagnosis_2, contains: "Malignant melanocytic proliferations", diagnosis: melanoma}
+      - {field: diagnosis_2, contains: "Malignant epidermal proliferations", diagnosis: squamous_cell_carcinoma}
+      - {field: diagnosis_3, contains: "Basal cell carcinoma", diagnosis: basal_cell_carcinoma}
+      - {field: diagnosis_3, contains: "actinic keratosis", diagnosis: actinic_keratosis}
+      - {field: diagnosis_3, contains: "Nevus", diagnosis: nevus}
+      - {field: diagnosis_3, contains: "keratosis", diagnosis: benign_keratosis}
+      - {field: diagnosis_3, contains: "lentigo", diagnosis: benign_keratosis}
+      - {field: diagnosis_3, contains: "Dermatofibroma", diagnosis: dermatofibroma}
+      - {field: diagnosis_2, contains: "Vascular", diagnosis: vascular_lesion}
+      - {field: diagnosis_1, contains: "Malignant", diagnosis: other_malignant}
+      - {field: diagnosis_1, contains: "Benign", diagnosis: other_benign}
+  ham10000:
+    # field dx: exact code
+    codes:
+      mel: melanoma
+      bcc: basal_cell_carcinoma
+      akiec: actinic_keratosis_or_bowen
+      nv: nevus
+      bkl: benign_keratosis
+      df: dermatofibroma
+      vasc: vascular_lesion
+  pad_ufes_20:
+    codes:
+      MEL: melanoma
+      SCC: squamous_cell_carcinoma
+      BCC: basal_cell_carcinoma
+      ACK: actinic_keratosis
+      NEV: nevus
+      SEK: benign_keratosis
+  fitzpatrick17k:
+    rules:
+      - {field: label, contains: "melanoma", diagnosis: melanoma}
+      - {field: label, contains: "squamous cell carcinoma", diagnosis: squamous_cell_carcinoma}
+      - {field: label, contains: "basal cell carcinoma", diagnosis: basal_cell_carcinoma}
+      - {field: label, contains: "actinic keratosis", diagnosis: actinic_keratosis}
+      - {field: three_partition_label, contains: "malignant", diagnosis: other_malignant}
+      - {field: three_partition_label, contains: "benign", diagnosis: other_benign}
+      - {field: three_partition_label, contains: "non-neoplastic", diagnosis: non_neoplastic}
+
+# Coarse body sites shared by every dataset that records one.
+# Keys are lower-cased source values.
+body_site:
+  head_neck: [head and neck, head & neck, head, neck, face, scalp, ear, nose, lip]
+  trunk: [trunk, anterior trunk, posterior trunk, lateral trunk, back, chest, abdomen, buttock]
+  upper_extremity: [upper extremity, arm, forearm, upper arm, shoulder, elbow, wrist]
+  lower_extremity: [lower extremity, thigh, lower leg, knee, ankle]
+  acral: [hand, foot, acral, palms/soles]
+  genital: [genital, anogenital region, genital region, perianal region]
+
+# ISIC encodes Fitzpatrick type as Roman numerals.
+fitzpatrick_roman: {I: 1, II: 2, III: 3, IV: 4, V: 5, VI: 6}

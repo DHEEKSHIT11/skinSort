@@ -1,0 +1,72 @@
+# The same pipeline as the Airflow DAG, for `dvc repro` (re-runs only the
+# stages whose code, parameters or inputs changed). Run from Data-Pipeline/.
+#
+# Raw data is downloaded by Airflow and versioned with `dvc add data/raw`
+# (data/raw.dvc), so the stages below start from data/raw.
+
+stages:
+  harmonize:
+    cmd: python -m scripts.preprocess.harmonize
+    deps:
+      - data/raw
+      - scripts/preprocess/harmonize.py
+      - ../configs/harmonization.yaml
+      - ../configs/urgency_mapping.yaml
+    outs:
+      - data/interim/harmonized.csv
+
+  image_stats:
+    cmd: python -m scripts.preprocess.image_stats
+    deps:
+      - data/raw
+      - data/interim/harmonized.csv
+      - scripts/preprocess/image_stats.py
+    outs:
+      - data/interim/image_stats.csv
+
+  quality:
+    cmd: python -m scripts.preprocess.quality
+    deps:
+      - data/interim/harmonized.csv
+      - data/interim/image_stats.csv
+      - scripts/preprocess/quality.py
+    params:
+      - preprocess.quality
+    outs:
+      - data/interim/quality_passed.csv
+      - data/interim/quality_dropped.csv
+
+  dedupe:
+    cmd: python -m scripts.preprocess.dedupe
+    deps:
+      - data/interim/quality_passed.csv
+      - scripts/preprocess/dedupe.py
+    params:
+      - preprocess.dedupe
+    outs:
+      - data/interim/deduped.csv
+      - data/interim/duplicates_dropped.csv
+
+  transform:
+    cmd: python -m scripts.preprocess.transform
+    deps:
+      - data/raw
+      - data/interim/deduped.csv
+      - scripts/preprocess/transform.py
+    params:
+      - preprocess.transform
+    outs:
+      - data/processed/images
+      - data/interim/features.csv
+
+  split:
+    cmd: python -m scripts.preprocess.split
+    deps:
+      - data/interim/deduped.csv
+      - data/interim/features.csv
+      - scripts/preprocess/split.py
+    params:
+      - seed
+      - preprocess.split
+    outs:
+      - data/processed/dataset.csv
