@@ -70,3 +70,13 @@ stages:
       - preprocess.split
     outs:
       - data/processed/dataset.csv
+
+  validate_schema:
+    cmd: python -m scripts.validation.schema
+    deps:
+      - data/processed/dataset.csv
+      - scripts/validation/schema.py
+      - ../configs/urgency_mapping.yaml
+    params:
+      - validation
+      - preprocess.quality
