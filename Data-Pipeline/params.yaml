@@ -113,3 +113,12 @@ preprocess:
     # Applied separately to the dermoscopic pool (ISIC + HAM10000) and to
     # PAD-UFES-20. Fitzpatrick17k is never trained on: all of it is fairness_test.
     ratios: {train: 0.70, val: 0.15, test: 0.15}
+
+validation:
+  # Schema rules for data/processed/dataset.csv (scripts/validation/schema.py).
+  # Image-quality limits are reused from preprocess.quality above.
+  min_rows: 20000              # fewer rows means a download or filter step broke
+  max_rows: 30000
+  # Largest share of missing values allowed per column (today's value in brackets).
+  max_missing:
+    age: 0.25                  # (0.171)
