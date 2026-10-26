@@ -7,3 +7,7 @@ PyYAML==6.0.3
 Pillow==13.0.0
 ImageHash==4.3.2
 dvc[gs]==3.67.1
+# Data validation (schema + statistics), bias slicing and the bias proxy model
+great_expectations==1.24.1
+fairlearn==0.15.0
+scikit-learn==1.9.1
