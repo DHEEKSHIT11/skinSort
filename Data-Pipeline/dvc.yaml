@@ -80,3 +80,12 @@ stages:
     params:
       - validation
       - preprocess.quality
+
+  detect_anomalies:
+    cmd: python -m scripts.validation.anomalies
+    deps:
+      - data/processed/dataset.csv
+      - scripts/validation/anomalies.py
+      - reference/baseline_profile.json
+    params:
+      - anomaly

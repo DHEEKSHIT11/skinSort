@@ -122,3 +122,20 @@ validation:
   # Largest share of missing values allowed per column (today's value in brackets).
   max_missing:
     age: 0.25                  # (0.171)
+
+anomaly:
+  # Compares each run with a reviewed snapshot of a good run (scripts/validation/anomalies.py).
+  # Refresh it after checking a run: python -m scripts.validation.anomalies --update-baseline
+  baseline: reference/baseline_profile.json
+  # "critical" = stop the run on critical findings, "warn" = stop on any, "never" = alert only
+  stop_on: critical
+  numeric_columns: [age, width, height, brightness, contrast, sharpness]
+  # Each check has a warn and a critical limit on how far this run moved from the baseline.
+  row_count: {warn: 0.05, critical: 0.25}      # relative change in number of rows
+  missing: {warn: 0.02, critical: 0.10}        # rise in share of missing values (0.10 = +10 pts)
+  outliers:                                    # rise in share outside the baseline IQR fences
+    iqr_multiplier: 3.0                        # fences at Q1 - 3*IQR and Q3 + 3*IQR
+    warn: 0.02
+    critical: 0.10
+  drift: {warn: 0.25, critical: 1.0}           # mean shift in baseline standard deviations
+  label_mix: {warn: 0.03, critical: 0.10}      # urgency-mix total variation distance per split
