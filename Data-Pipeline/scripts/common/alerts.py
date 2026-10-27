@@ -23,8 +23,15 @@ logger = get_logger("alerts")
 
 def _send_slack(webhook: str, title: str, body: str) -> None:
     response = requests.post(webhook, json={"text": f":rotating_light: *{title}*\n{body}"},
-                             timeout=15)
+                             timeout=15, allow_redirects=False)
     response.raise_for_status()
+    # Slack replies "ok" when the message is posted. A malformed webhook URL is
+    # redirected to Slack's docs page (also HTTP 200), so status alone is not proof.
+    if response.text.strip() != "ok":
+        raise requests.RequestException(
+            f"Slack did not post the alert (HTTP {response.status_code}): "
+            f"{response.text.strip()[:80]!r}"
+        )
 
 
 def _send_email(recipients: List[str], title: str, body: str) -> None:
