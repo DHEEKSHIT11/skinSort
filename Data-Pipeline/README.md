@@ -226,6 +226,19 @@ The remaining long bars are `image_stats` (8.5 min) and `transform` (9.6 min):
 CPU-bound image work on the VM's 4 cores. Next options: a larger VM for
 preprocessing runs, or merging both passes so each image is decoded once.
 
+**Run 3 — full pipeline with validation, anomaly and bias stages, 20 min 50 s**
+([full screenshot](docs/gantt_run3_validation.png))
+
+![Gantt chart, run 3](docs/gantt_run3_validation.png)
+
+All 16 tasks succeeded on the VM with the rebuilt image (Great Expectations,
+Fairlearn and scikit-learn installed). The three new stages took
+`validate_schema` 15.9 s, `detect_anomalies` 1.3 s and `bias_slicing` 8.0 s:
+about 25 s in total, roughly 2 % of the run, so data validation adds no
+meaningful bottleneck. `image_stats` and `transform` remain the long bars.
+
+![Airflow run 3, all tasks green](docs/airflow_run3_success.png)
+
 ## Folder structure
 
 ```
