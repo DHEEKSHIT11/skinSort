@@ -139,3 +139,10 @@ anomaly:
     critical: 0.10
   drift: {warn: 0.25, critical: 1.0}           # mean shift in baseline standard deviations
   label_mix: {warn: 0.03, critical: 0.10}      # urgency-mix total variation distance per split
+
+bias:
+  # Data slicing and bias mitigation (scripts/validation/bias.py).
+  slices: [sex, age_group, body_site, skin_tone, source]  # age groups use transform.age_bins
+  min_urgent_cases: 20     # a group needs this many urgent cases before its recall is judged
+  max_recall_gap: 0.05     # scoping target: urgent-recall gap across groups <= 5 points
+  alert_on_gap: true       # warn on Slack when a gap is above target (never stops the run)
