@@ -3,7 +3,8 @@
     [ingest_isic, ingest_ham10000, ingest_pad_ufes_20, ingest_fitzpatrick17k]   (parallel)
       -> ingest_report -> version_raw_data
                        -> harmonize -> image_stats -> quality_filter -> dedupe
-                          -> transform -> split -> version_processed_data
+                          -> transform -> split -> validate_schema -> detect_anomalies
+                          -> bias_slicing -> version_processed_data
 
 Every task retries on failure and sends a Slack/email alert when it finally fails.
 Each preprocessing task is a thin wrapper around ``scripts.preprocess.<module>.run``
@@ -106,6 +107,22 @@ def skinsort_data_pipeline():
     def split() -> dict:
         return run_step("preprocess.split")
 
+    # --- validation --------------------------------------------------------------
+    @task(retries=0)
+    def validate_schema() -> dict:
+        """Great Expectations schema checks + statistics; fails the run on bad data."""
+        return run_step("validation.schema")
+
+    @task(retries=0)
+    def detect_anomalies() -> dict:
+        """Compare with the baseline; alert on any finding, stop on critical ones."""
+        return run_step("validation.anomalies")
+
+    @task(retries=0)
+    def bias_slicing() -> dict:
+        """Fairlearn slices + mitigation report and sample weights; never stops the run."""
+        return run_step("validation.bias")
+
     @task(retries=1)
     def version_processed_data() -> dict:
         from scripts.versioning import commit_pipeline_outputs
@@ -116,7 +133,8 @@ def skinsort_data_pipeline():
     )
     report >> version_raw_data()
     (report >> harmonize() >> image_stats() >> quality_filter() >> dedupe()
-     >> transform() >> split() >> version_processed_data())
+     >> transform() >> split() >> validate_schema() >> detect_anomalies()
+     >> bias_slicing() >> version_processed_data())
 
 
 skinsort_data_pipeline()

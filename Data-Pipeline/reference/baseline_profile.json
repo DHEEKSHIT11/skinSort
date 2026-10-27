@@ -1,0 +1,159 @@
+{
+  "label_mix": {
+    "fairness_test": {
+      "priority": 0.07232947232947233,
+      "routine": 0.8193050193050193,
+      "urgent": 0.10836550836550836
+    },
+    "pad_test": {
+      "priority": 0.6843657817109144,
+      "routine": 0.21238938053097345,
+      "urgent": 0.10324483775811209
+    },
+    "pad_train": {
+      "priority": 0.6858213616489693,
+      "routine": 0.20299812617114305,
+      "urgent": 0.11118051217988757
+    },
+    "pad_val": {
+      "priority": 0.7072463768115942,
+      "routine": 0.2028985507246377,
+      "urgent": 0.08985507246376812
+    },
+    "test": {
+      "priority": 0.14539748953974896,
+      "routine": 0.6349372384937239,
+      "urgent": 0.2196652719665272
+    },
+    "train": {
+      "priority": 0.14552099649436862,
+      "routine": 0.6231819198925934,
+      "urgent": 0.23129708361303797
+    },
+    "val": {
+      "priority": 0.14921190893169878,
+      "routine": 0.660245183887916,
+      "urgent": 0.1905429071803853
+    }
+  },
+  "missing_rate": {
+    "age": 0.17122529644268775,
+    "age_bin_0_30": 0.0,
+    "age_bin_30_45": 0.0,
+    "age_bin_45_60": 0.0,
+    "age_bin_60_75": 0.0,
+    "age_bin_75_120": 0.0,
+    "age_feat": 0.0,
+    "age_missing": 0.0,
+    "body_site": 0.0,
+    "brightness": 0.0,
+    "contrast": 0.0,
+    "diagnosis": 0.0,
+    "diagnosis_raw": 0.0,
+    "error": 1.0,
+    "fitzpatrick": 0.7889723320158103,
+    "group_id": 0.0,
+    "height": 0.0,
+    "image_id": 0.0,
+    "image_path": 0.0,
+    "image_type": 0.0,
+    "lesion_id": 0.41221343873517785,
+    "license": 0.0,
+    "patient_id": 0.8155731225296443,
+    "phash": 0.0,
+    "processed_image": 0.0,
+    "q_bleed": 0.9099209486166008,
+    "q_bleed_feat": 0.0,
+    "q_bleed_missing": 0.0,
+    "q_changed": 0.9252569169960474,
+    "q_changed_feat": 0.0,
+    "q_changed_missing": 0.0,
+    "q_elevation": 0.9097628458498024,
+    "q_elevation_feat": 0.0,
+    "q_elevation_missing": 0.0,
+    "q_grew": 0.925494071146245,
+    "q_grew_feat": 0.0,
+    "q_grew_missing": 0.0,
+    "q_hurt": 0.9100790513833992,
+    "q_hurt_feat": 0.0,
+    "q_hurt_missing": 0.0,
+    "q_itch": 0.9099209486166008,
+    "q_itch_feat": 0.0,
+    "q_itch_missing": 0.0,
+    "readable": 0.0,
+    "sex": 0.0,
+    "sex_female": 0.0,
+    "sex_male": 0.0,
+    "sex_unknown": 0.0,
+    "sharpness": 0.0,
+    "site_acral": 0.0,
+    "site_genital": 0.0,
+    "site_head_neck": 0.0,
+    "site_lower_extremity": 0.0,
+    "site_trunk": 0.0,
+    "site_unknown": 0.0,
+    "site_upper_extremity": 0.0,
+    "source": 0.0,
+    "source_image_id": 0.0,
+    "split": 0.0,
+    "urgency": 0.0,
+    "width": 0.0
+  },
+  "numeric": {
+    "age": {
+      "lower_fence": -70.0,
+      "mean": 49.65161198016025,
+      "outlier_share": 0.0,
+      "q1": 35.0,
+      "q3": 70.0,
+      "std": 22.67039849723467,
+      "upper_fence": 175.0
+    },
+    "brightness": {
+      "lower_fence": 46.61231276436638,
+      "mean": 148.41877097530806,
+      "outlier_share": 0.00023715415019762845,
+      "q1": 134.61418544511992,
+      "q3": 163.9481430053711,
+      "std": 23.922900691616725,
+      "upper_fence": 251.95001568612463
+    },
+    "contrast": {
+      "lower_fence": -38.98794130328137,
+      "mean": 28.69353190914667,
+      "outlier_share": 0.0007905138339920949,
+      "q1": 17.501080947968013,
+      "q3": 36.33075503171781,
+      "std": 15.20101061648458,
+      "upper_fence": 92.81977728296718
+    },
+    "height": {
+      "lower_fence": -4248.0,
+      "mean": 1061.4104347826087,
+      "outlier_share": 0.0,
+      "q1": 450.0,
+      "q3": 2016.0,
+      "std": 933.6111400322412,
+      "upper_fence": 6714.0
+    },
+    "sharpness": {
+      "lower_fence": -453.3762550354004,
+      "mean": 263.2824637653611,
+      "outlier_share": 0.09284584980237154,
+      "q1": 34.90700435638428,
+      "q3": 197.6680908203125,
+      "std": 673.8044000873493,
+      "upper_fence": 685.9513502120972
+    },
+    "width": {
+      "lower_fence": -6624.0,
+      "mean": 1439.874861660079,
+      "outlier_share": 0.0,
+      "q1": 600.0,
+      "q3": 3008.0,
+      "std": 1390.2048664083488,
+      "upper_fence": 10232.0
+    }
+  },
+  "rows": 25300
+}

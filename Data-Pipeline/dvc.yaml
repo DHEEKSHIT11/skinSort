@@ -70,3 +70,34 @@ stages:
       - preprocess.split
     outs:
       - data/processed/dataset.csv
+
+  validate_schema:
+    cmd: python -m scripts.validation.schema
+    deps:
+      - data/processed/dataset.csv
+      - scripts/validation/schema.py
+      - ../configs/urgency_mapping.yaml
+    params:
+      - validation
+      - preprocess.quality
+
+  detect_anomalies:
+    cmd: python -m scripts.validation.anomalies
+    deps:
+      - data/processed/dataset.csv
+      - scripts/validation/anomalies.py
+      - reference/baseline_profile.json
+    params:
+      - anomaly
+
+  bias_slicing:
+    cmd: python -m scripts.validation.bias
+    deps:
+      - data/processed/dataset.csv
+      - scripts/validation/bias.py
+    params:
+      - seed
+      - bias
+      - preprocess.transform.age_bins
+    outs:
+      - data/processed/sample_weights.csv

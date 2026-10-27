@@ -116,6 +116,8 @@ flowchart TD
 
 GCS layout: `raw/` → `processed/` → `splits/`. Git holds only code and `.dvc` pointers.
 
+**Full documentation, setup steps and results for the data pipeline (including schema validation, anomaly alerts and bias analysis): [Data-Pipeline/README.md](Data-Pipeline/README.md).**
+
 ---
 
 ## Model
