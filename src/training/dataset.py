@@ -126,9 +126,13 @@ class SkinDataset(Dataset):
 def make_loader(df: pd.DataFrame, params: Dict[str, Any], train: bool,
                 with_answers: bool = False) -> DataLoader:
     dataset = SkinDataset(df, params, train=train, with_answers=with_answers)
-    return DataLoader(dataset, batch_size=params["train"]["batch_size"], shuffle=train,
+    batch_size = params["train"]["batch_size"]
+    # In training, drop a leftover batch of 1 image: batch norm layers fail on it.
+    # Only when there is more than one full batch, so tiny datasets still train.
+    drop_last = train and len(dataset) > batch_size
+    return DataLoader(dataset, batch_size=batch_size, shuffle=train,
                       num_workers=params["train"]["num_workers"],
-                      pin_memory=torch.cuda.is_available())
+                      pin_memory=torch.cuda.is_available(), drop_last=drop_last)
 
 
 def main() -> None:

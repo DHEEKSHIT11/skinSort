@@ -64,5 +64,5 @@ tuning:
 
 mlflow:
   experiment_name: skinsort-model
-  tracking_uri: mlruns
+  tracking_uri: sqlite:///mlflow.db
   registered_model_name: skinsort-triage
