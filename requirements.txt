@@ -1,1 +1,9 @@
-
+-r Data-Pipeline/requirements.txt
+torch
+torchvision
+timm
+mlflow
+optuna
+shap
+grad-cam
+matplotlib
