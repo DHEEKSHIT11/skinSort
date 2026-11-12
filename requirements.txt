@@ -1,9 +1,6 @@
+# Model pipeline (training, evaluation, bias, tuning, registry, serving).
+# Includes the data pipeline's pins; requirements-model.txt is the lean set used by
+# the Docker image and the model-pipeline CI.
 -r Data-Pipeline/requirements.txt
-torch
-torchvision
-timm
-mlflow
-optuna
-shap
-grad-cam
-matplotlib
+-r requirements-model.txt
+grad-cam==1.5.7

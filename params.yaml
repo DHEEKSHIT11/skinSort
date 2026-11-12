@@ -31,6 +31,11 @@ train:
   num_workers: 4
   smoke_test_rows: 200             # small run to check the code before using a GPU
 
+preprocess:                        # serving: same as Data-Pipeline/params.yaml preprocess.transform
+  image_size: 384
+  color_constancy_power: 6
+  jpeg_quality: 92
+
 augment:
   random_crop_scale: [0.8, 1.0]
   horizontal_flip: true
@@ -55,12 +60,39 @@ bias:
   min_urgent_cases: 20
   max_recall_gap: 0.05
 
-tuning:
+tuning:                          # Hyperopt TPE on the fusion head (src/training/tune.py)
   n_trials: 20
-  lr: [0.00001, 0.001]
-  weight_decay: [0.00001, 0.01]
+  cv_folds: 5                      # grouped by patient, on pad_train only
+  max_epochs: 50
+  patience: 5
+  lr: [0.00001, 0.001]             # log-uniform
+  weight_decay: [0.00001, 0.01]    # log-uniform
   dropout: [0.0, 0.5]
-  urgent_weight: [2.0, 6.0]
+  urgent_weight: [2.0, 6.0]        # class weight of "urgent" (routine 1.0, priority 1.5)
+  hidden_dim: [32, 64, 128]        # choice
+
+pipeline:                          # src/training/pipeline.py builds this phone model
+  model_name: fusion_oof_rw
+  backbone: efficientnet_b3
+  reweight: [sex, body_site]       # Kamiran & Calders reweighing (same formula as the data pipeline)
+  mitigate: [sex, body_site, skin_tone]
+
+selection:                         # src/training/select_model.py (validation data only)
+  # folders in outputs/evaluation; fusion_pad* are earlier local versions (skipped where absent, e.g. CI)
+  candidates: [fusion_pad, fusion_pad_tuned, fusion_oof, fusion_oof_tuned, fusion_oof_rw]
+  min_tau_urgent_cases: 100        # tau from fewer urgent photos is too noisy
+  max_auc_drop_for_bias: 0.02      # within this AUC of the best, fewest failing bias slices wins
+
+registry:                          # promotion gate in src/training/registry.py
+  # decided on validation metrics only (metrics.json "val"); test results are warnings
+  required_checks: [val_urgent_auc, val_calibration_error]
+  warn_checks: [test_urgent_recall, test_calibration_error, bias]
+  min_val_urgent_auc: 0.75
+  max_val_calibration_error: 0.05
+  compare_metric: urgent_auc                 # validation, vs the current Production version
+  max_regression: 0.01                       # allowed drop before a new version is rejected
+  gcp_project: skinsort-512623
+  gcs_uri: gs://skinsort-data-asdr/models/skinsort-triage   # versioned copies: v<N>/ + latest.json
 
 mlflow:
   experiment_name: skinsort-model
