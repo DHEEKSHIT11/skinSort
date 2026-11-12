@@ -1,0 +1,46 @@
+# Model pipeline CI (assignment §7.1): lint and unit tests on every push and pull request that
+# touches the model code (course Github_Labs pytest workflows). A new data version
+# (Data-Pipeline/dvc.lock) on a push also triggers it. When this passes on main,
+# model-pipeline-cd.yml trains, validates, checks bias, registers and deploys the model.
+name: model-pipeline-ci
+
+on:
+  push:
+    paths: ["src/**", "tests/**", "params.yaml", "requirements-model.txt", "requirements-dev.txt",
+            "pytest.ini", ".flake8", "docker/**", ".github/workflows/model-pipeline-*.yml", "Data-Pipeline/dvc.lock"]
+  pull_request:
+    paths: ["src/**", "tests/**", "params.yaml", "requirements-model.txt", "requirements-dev.txt",
+            "pytest.ini", ".flake8", "docker/**", ".github/workflows/model-pipeline-*.yml"]
+  workflow_dispatch:
+
+env:
+  MLFLOW_DISABLE_AGENT_HINT: "1"
+  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-*.txt
+      - name: Install (CPU PyTorch)
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu torch==2.15.0 torchvision==0.29.2
+          pip install -r requirements-dev.txt
+      - name: Lint
+        run: flake8 src tests
+      - name: Unit tests
+        run: pytest -q tests
+      - name: Notify on failure
+        if: failure()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+        run: python -m src.notify --status failure --title "model tests (${{ github.ref_name }})"

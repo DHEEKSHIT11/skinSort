@@ -1,0 +1,146 @@
+# Model pipeline CD (assignment §7.2-7.6), following the course root ci_cd_pipeline.yml and
+# Github_Labs/Lab4: train -> validate -> bias -> registry -> Docker image to Artifact Registry ->
+# notification. Runs after model-pipeline-ci passes on main (workflow_run), or by hand.
+#   1. GCP auth (google-github-actions/auth@v2), DVC pull of the processed data,
+#      download of the GPU-trained backbone checkpoint from GCS
+#   2. python -m src.training.pipeline: reweighted fusion head + out-of-fold tau -> bias check
+#      and mitigation -> model selection -> registry gate on validation metrics -> export
+#   3. gate against the DEPLOYED model (GCS latest.json, validation metrics): if the new one is
+#      worse, nothing is pushed and the deployed version stays. Manual rollback of a bad
+#      deployment: `python -m src.training.registry rollback-gcs` + re-tag the image.
+#   4. bias: a bias gap above the limit sends an alert (assignment: "alert or block")
+#   5. push the model to GCS (versioned, version.txt) and the serving image to Artifact Registry
+#   6. Slack message on success and on failure (src/notify.py: same channels and rules as the data
+#      pipeline alerts, #pipeline-alerts; optional email copy with smtplib like the course Airflow lab)
+# Without the GCP_SA_KEY secret the pipeline job is skipped with a notice.
+# The image backbones themselves need a GPU and are trained on the GCP VM
+# (python -m src.training.train), not on GitHub runners. The runner only has the backbone it
+# downloads and the phone model it builds, so model selection here compares that model with the
+# baselines; the full comparison (all backbones and earlier phone versions) is in the report.
+#
+# Secrets: GCP_SA_KEY (service-account JSON), GCP_PROJECT_ID, SLACK_WEBHOOK_URL (the data pipeline's
+# webhook); optional email copy: ALERT_EMAIL_TO, SMTP_HOST, SMTP_USER, SMTP_PASSWORD.
+# One-time setup: Artifact Registry repo `skinsort` in GCP_REGION, and the backbone at
+# gs://skinsort-data-asdr/models/backbones/efficientnet_b3/best.pt.
+# Note: GitHub starts workflow_run workflows only from the default branch, so this runs once
+# the file is on main.
+name: model-pipeline-cd
+
+on:
+  workflow_run:
+    workflows: [model-pipeline-ci]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  GCP_REGION: us-central1
+  REPOSITORY: skinsort
+  BACKBONE_URI: gs://skinsort-data-asdr/models/backbones/efficientnet_b3/best.pt
+  MLFLOW_DISABLE_AGENT_HINT: "1"
+  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+jobs:
+  # The full pipeline needs GCP access. Without the secret it is skipped (not failed).
+  check-secrets:
+    # run after a successful CI on main, or when started by hand
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      has_gcp: ${{ steps.check.outputs.has_gcp }}
+    steps:
+      - id: check
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: |
+          if [ -n "$GCP_SA_KEY" ]; then echo "has_gcp=true" >> "$GITHUB_OUTPUT"
+          else echo "has_gcp=false" >> "$GITHUB_OUTPUT"; echo "::notice::GCP_SA_KEY not set; model pipeline job skipped"; fi
+
+  pipeline:
+    needs: check-secrets
+    if: needs.check-secrets.outputs.has_gcp == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}   # the commit CI just tested
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-*.txt
+      - name: Install (CPU PyTorch)
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu torch==2.15.0 torchvision==0.29.2
+          pip install -r requirements-model.txt
+
+      - name: Authenticate with GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Pull versioned data (DVC) and the GPU-trained backbone
+        run: |
+          (cd Data-Pipeline && dvc pull data/processed/dataset.csv data/processed/images)
+          mkdir -p outputs/models/efficientnet_b3
+          gcloud storage cp "$BACKBONE_URI" outputs/models/efficientnet_b3/best.pt
+
+      - name: Train, validate, bias check, select, register (gate)
+        run: python -m src.training.pipeline --fail-if-rejected
+
+      - name: Gate against the deployed model (rollback = keep the deployed version)
+        run: |
+          EVAL_DIR=$(python -c "import json; print(json.load(open('outputs/selection/model_selection.json'))['eval_dir'])")
+          python -m src.training.registry compare-deployed --evaluation "$EVAL_DIR"
+
+      - name: Bias alert
+        run: |
+          result=$(python -c "import json; print(json.load(open('outputs/selection/model_selection.json'))['bias_result'])")
+          echo "bias result: $result"
+          if [ "$result" = "FAIL" ]; then
+            python -m src.notify --status bias-alert --title "model pipeline" \
+              --details "The selected model has a bias gap above params.yaml bias.max_recall_gap. See the bias report artifact."
+          fi
+
+      - name: Push the model to GCS (versioned)
+        run: python -m src.training.registry push
+
+      - name: Build and push the serving image to Artifact Registry
+        run: |
+          VERSION=$(python -c "import json; print(json.load(open('outputs/gcs_push.json'))['gcs_version'])")
+          IMAGE="${GCP_REGION}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${REPOSITORY}/skinsort-serving"
+          gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+          docker build -f docker/Dockerfile --target serving -t "${IMAGE}:v${VERSION}" -t "${IMAGE}:latest" .
+          docker push "${IMAGE}:v${VERSION}"
+          docker push "${IMAGE}:latest"
+
+      - name: Keep reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-pipeline-reports
+          path: |
+            outputs/pipeline_summary.json
+            outputs/selection/
+            outputs/bias/
+            outputs/evaluation/
+            mlflow.db
+            mlruns/
+          if-no-files-found: ignore
+
+      - name: Notify success
+        if: success()
+        run: python -m src.notify --status success --title "model pipeline"
+      - name: Notify failure
+        if: failure()
+        run: python -m src.notify --status failure --title "model pipeline"
