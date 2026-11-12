@@ -337,7 +337,7 @@ The registry code is `src/training/registry.py` plus `src/serving/triage_model.p
 
 ## 9. CI/CD (PDF §7)
 
-The workflow is `.github/workflows/model-pipeline-ci.yml`, modelled on the course `ci_cd_pipeline.yml`:
+Two workflows, modelled on the course `ci_cd_pipeline.yml`: `.github/workflows/model-pipeline-ci.yml` (lint + tests on every push and pull request) and `model-pipeline-cd.yml` (the GCP pipeline, started when CI passes on `main`, or by hand):
 
 | Step | PDF | How |
 |---|---|---|
@@ -349,10 +349,10 @@ The workflow is `.github/workflows/model-pipeline-ci.yml`, modelled on the cours
 | Notifications | 7.5 | `src/notify.py` (smtplib, like the course Airflow lab): failure, success, bias alert |
 | Rollback | 7.6 | `registry compare-deployed`: a model worse than the deployed one on validation is not pushed, so the deployed version stays; `rollback-gcs` for a manual rollback |
 
-Without the `GCP_SA_KEY` secret, the pipeline job is skipped with a notice instead of failing. Reports, `mlflow.db`
+Without the `GCP_SA_KEY` secret, the CD pipeline job is skipped with a notice instead of failing; pull requests only show the CI test runs. Reports, `mlflow.db`
 and `mlruns/` are kept as run artifacts.
 
-**Status.** Not run on GitHub yet. It needs:
+**Status.** CI runs on pull request #4 and passes (lint + 71 tests). CD has not run yet (it starts once the file is on `main`). It needs:
 - a push
 - the secrets `GCP_SA_KEY`, `GCP_PROJECT_ID`, `SMTP_USER`, `SMTP_PASSWORD`, `NOTIFY_TO`
 - an Artifact Registry repository `skinsort`
