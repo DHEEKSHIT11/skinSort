@@ -53,3 +53,10 @@ def test_missing_answers_become_zero(params):
     loader = make_loader(df, params, train=False, with_answers=True)
     answers = loader.dataset.answers
     assert not np.isnan(answers).any()
+
+
+def test_data_version_reads_dvc_lock():
+    from src.training.dataset import data_version
+    info = data_version(load_params())
+    assert len(info["data_dataset_md5"]) == 32
+    assert info["data_images_md5"].endswith(".dir")

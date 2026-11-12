@@ -35,6 +35,32 @@ def resolve(path: str) -> Path:
     return ROOT / path
 
 
+def data_version(params: Dict[str, Any]) -> Dict[str, str]:
+    """DVC version of the data this run uses, read from Data-Pipeline/dvc.lock.
+
+    Logged on every MLflow run so each result can be traced to the exact data:
+    data_dataset_md5 / data_images_md5 are the DVC hashes, data_matches_lock says
+    whether the dataset.csv on disk is that version (False = local edits or not pulled).
+    """
+    import hashlib
+
+    csv = resolve(params["data"]["dataset_csv"])
+    lock = ROOT / "Data-Pipeline" / "dvc.lock"
+    info = {"data_dataset_md5": "unknown", "data_images_md5": "unknown"}
+    if lock.exists():
+        stages = yaml.safe_load(lock.read_text()).get("stages", {})
+        for stage in stages.values():
+            for out in stage.get("outs", []):
+                if out["path"].endswith("processed/dataset.csv"):
+                    info["data_dataset_md5"] = out["md5"]
+                elif out["path"].endswith("processed/images"):
+                    info["data_images_md5"] = out["md5"]
+    if csv.exists():
+        info["data_matches_lock"] = str(hashlib.md5(csv.read_bytes()).hexdigest()
+                                        == info["data_dataset_md5"])
+    return info
+
+
 class RandomBlur:
     """Gaussian blur with probability p, to mimic soft phone photos."""
 
