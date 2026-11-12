@@ -58,6 +58,15 @@ def build_fusion_head(params: Dict[str, Any], num_image_features: int,
                       hidden_dim=cfg["hidden_dim"], dropout=cfg["dropout"])
 
 
+def fusion_head_from_checkpoint(params: Dict[str, Any], ckpt: Dict[str, Any]) -> FusionHead:
+    """Rebuild a saved head with the size it was trained with (tuning may change hidden_dim)."""
+    hidden = ckpt.get("hidden_dim", ckpt["state_dict"]["answer_branch.0.weight"].shape[0])
+    p = {**params, "fusion": {**params["fusion"], "hidden_dim": int(hidden)}}
+    head = build_fusion_head(p, ckpt["num_image_features"], len(ckpt["answer_columns"]))
+    head.load_state_dict(ckpt["state_dict"])
+    return head
+
+
 def main() -> None:
     from src.models.image_model import build_image_model, count_parameters
     from src.training.dataset import answer_feature_columns, load_params
