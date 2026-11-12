@@ -4,6 +4,12 @@
     python -m src.training.train                           # every backbone in params.yaml
     python -m src.training.train --backbone efficientnet_b3
 
+    # fine-tune a trained model on the phone photos (selects on pad_val)
+    python -m src.training.train --backbone efficientnet_b3 \\
+        --init-checkpoint outputs/models/efficientnet_b3/best.pt \\
+        --train-split pad_train --val-split pad_val --lr 0.00003 --batch-size 8 \\
+        --freeze-bn --out-name efficientnet_b3_pad
+
 Every run is logged to MLflow (see the mlflow section of params.yaml).
 The best epoch of each backbone is saved to outputs/models/<backbone>/best.pt.
 """
@@ -22,7 +28,7 @@ from sklearn.metrics import f1_score, recall_score, roc_auc_score
 from torch import nn
 
 from src.models.image_model import build_image_model, count_parameters
-from src.training.dataset import ROOT, load_params, load_table, make_loader
+from src.training.dataset import ROOT, load_params, load_table, make_loader, data_version
 
 
 def set_seed(seed: int) -> None:
@@ -74,9 +80,24 @@ def selection_score(metrics: Dict[str, float]) -> float:
     return metrics["macro_f1"] if math.isnan(auc) else auc
 
 
+def freeze_batchnorm(model: nn.Module) -> None:
+    """Keep every BatchNorm layer as trained: running stats in eval mode and scale/shift
+    frozen. Used when fine-tuning with small batches, which otherwise corrupt the stats."""
+    for module in model.modules():
+        if isinstance(module, nn.modules.batchnorm._BatchNorm):
+            module.eval()
+            for param in module.parameters():
+                param.requires_grad = False
+
+
 def train_one_backbone(params: Dict[str, Any], backbone: str, train_df: pd.DataFrame,
                        val_df: pd.DataFrame, device: torch.device, pretrained: bool = True,
-                       epochs: Optional[int] = None, out_dir: Optional[Path] = None) -> Dict[str, Any]:
+                       epochs: Optional[int] = None, out_dir: Optional[Path] = None,
+                       init_checkpoint: Optional[Path] = None,
+                       run_name: Optional[str] = None, freeze_bn: bool = False) -> Dict[str, Any]:
+    """Train one backbone. With init_checkpoint, start from that trained model's
+    weights instead of ImageNet (used to fine-tune on the phone photos). With
+    freeze_bn, BatchNorm layers keep their trained statistics (needed for small batches)."""
     cfg = params["train"]
     epochs = epochs or cfg["epochs"]
     urgent_idx = params["data"]["classes"].index("urgent")
@@ -84,20 +105,36 @@ def train_one_backbone(params: Dict[str, Any], backbone: str, train_df: pd.DataF
     out_dir.mkdir(parents=True, exist_ok=True)
     best_path = out_dir / "best.pt"
 
-    model = build_image_model(params, backbone, pretrained=pretrained).to(device)
+    model = build_image_model(params, backbone, pretrained=pretrained and not init_checkpoint)
+    # splits whose photos the weights have learned from (fit_final.py refuses to pick a
+    # threshold on them, because scores on photos the model trained on are too optimistic)
+    trained_on = set(train_df["split"].dropna().unique()) if "split" in train_df else set()
+    if init_checkpoint:
+        ckpt = torch.load(init_checkpoint, map_location="cpu", weights_only=False)
+        if ckpt["backbone"] != backbone:
+            raise ValueError(f"{init_checkpoint} is a {ckpt['backbone']} model, not {backbone}")
+        model.load_state_dict(ckpt["state_dict"])
+        trained_on |= set(ckpt.get("trained_on", []))
+    model = model.to(device)
     train_loader = make_loader(train_df, params, train=True)
     val_loader = make_loader(val_df, params, train=False)
     class_weights = torch.tensor(cfg["class_weights"], dtype=torch.float32, device=device)
     loss_fn = nn.CrossEntropyLoss(weight=class_weights)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg["lr"], weight_decay=cfg["weight_decay"])
+    if freeze_bn:
+        freeze_batchnorm(model)
+    trainable = [p for p in model.parameters() if p.requires_grad]
+    optimizer = torch.optim.AdamW(trainable, lr=cfg["lr"], weight_decay=cfg["weight_decay"])
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
     best: Dict[str, Any] = {}
     best_score, epochs_without_gain = -math.inf, 0
 
-    with mlflow.start_run(run_name=backbone):
+    with mlflow.start_run(run_name=run_name or backbone):
+        mlflow.set_tags(data_version(params))
         mlflow.log_params({
             "backbone": backbone, "pretrained": pretrained, "epochs": epochs,
+            "init_checkpoint": str(init_checkpoint) if init_checkpoint else "none",
+            "freeze_bn": freeze_bn,
             "lr": cfg["lr"], "weight_decay": cfg["weight_decay"], "batch_size": cfg["batch_size"],
             "image_size": cfg["image_size"], "class_weights": str(cfg["class_weights"]),
             "train_images": len(train_df), "val_images": len(val_df),
@@ -106,6 +143,8 @@ def train_one_backbone(params: Dict[str, Any], backbone: str, train_df: pd.DataF
 
         for epoch in range(1, epochs + 1):
             model.train()
+            if freeze_bn:
+                freeze_batchnorm(model)      # model.train() switches BatchNorm back on
             start, total_loss, seen = time.time(), 0.0, 0
             for batch in train_loader:
                 images, labels = batch["image"].to(device), batch["label"].to(device)
@@ -132,7 +171,7 @@ def train_one_backbone(params: Dict[str, Any], backbone: str, train_df: pd.DataF
                 best = {"backbone": backbone, "epoch": epoch, **metrics}
                 torch.save({"state_dict": model.state_dict(), "backbone": backbone,
                             "classes": params["data"]["classes"], "epoch": epoch,
-                            "val_metrics": metrics}, best_path)
+                            "val_metrics": metrics, "trained_on": sorted(trained_on)}, best_path)
             else:
                 epochs_without_gain += 1
                 if epochs_without_gain >= cfg["early_stopping_patience"]:
@@ -161,23 +200,43 @@ def main() -> None:
     parser.add_argument("--smoke", action="store_true", help="tiny data, 1 epoch, to check the code")
     parser.add_argument("--no-pretrained", action="store_true", help="skip downloading ImageNet weights")
     parser.add_argument("--epochs", type=int, help="override train.epochs")
+    parser.add_argument("--init-checkpoint", type=Path,
+                        help="start from this trained model instead of ImageNet weights")
+    parser.add_argument("--train-split", default="train", help="key under data.splits to train on")
+    parser.add_argument("--val-split", default="val", help="key under data.splits to pick the best epoch on")
+    parser.add_argument("--lr", type=float, help="override train.lr")
+    parser.add_argument("--batch-size", type=int, help="override train.batch_size")
+    parser.add_argument("--out-name", help="folder under outputs/models (default: the backbone name)")
+    parser.add_argument("--freeze-bn", action="store_true",
+                        help="keep BatchNorm statistics fixed (use with small fine-tuning batches)")
     args = parser.parse_args()
+    if args.out_name and not args.backbone:
+        parser.error("--out-name needs --backbone")
+    if args.init_checkpoint and not args.backbone:
+        parser.error("--init-checkpoint needs --backbone")
 
     params = load_params()
+    if args.lr:
+        params["train"]["lr"] = args.lr
+    if args.batch_size:
+        params["train"]["batch_size"] = args.batch_size
     set_seed(params["seed"])
     device = pick_device()
     splits = params["data"]["splits"]
     limit = params["train"]["smoke_test_rows"] if args.smoke else None
     epochs = 1 if args.smoke else args.epochs
 
-    train_df = load_table(params, [splits["train"]], limit=limit)
-    val_df = load_table(params, [splits["val"]], limit=limit)
+    train_df = load_table(params, [splits[args.train_split]], limit=limit)
+    val_df = load_table(params, [splits[args.val_split]], limit=limit)
     print(f"device {device}, {len(train_df)} train images, {len(val_df)} val images")
 
     setup_mlflow(params, "-smoke" if args.smoke else "")
     backbones = [args.backbone] if args.backbone else params["train"]["backbones"]
+    out_dir = ROOT / "outputs" / "models" / args.out_name if args.out_name else None
     results = [train_one_backbone(params, name, train_df, val_df, device,
-                                  pretrained=not args.no_pretrained, epochs=epochs)
+                                  pretrained=not args.no_pretrained, epochs=epochs,
+                                  out_dir=out_dir, init_checkpoint=args.init_checkpoint,
+                                  run_name=args.out_name, freeze_bn=args.freeze_bn)
                for name in backbones]
 
     print("\nBest epoch per backbone (sorted by val urgent AUC):")

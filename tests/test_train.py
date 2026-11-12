@@ -45,3 +45,46 @@ def test_train_one_backbone_saves_checkpoint(params, tmp_path):
     assert (tmp_path / "model" / "best.pt").exists()
     assert 0.0 <= best["macro_f1"] <= 1.0
     assert best["epoch"] in (1, 2)
+
+
+def test_train_one_backbone_starts_from_checkpoint(params, tmp_path):
+    mlflow.set_tracking_uri(f"sqlite:///{tmp_path / 'mlflow.db'}")
+    mlflow.create_experiment("test", artifact_location=(tmp_path / "artifacts").as_uri())
+    mlflow.set_experiment("test")
+    train_df, val_df = load_table(params, ["train"]), load_table(params, ["val"])
+    first = train_one_backbone(params, "resnet18", train_df, val_df, torch.device("cpu"),
+                               pretrained=False, epochs=1, out_dir=tmp_path / "first")
+    params["train"]["lr"] = 0.0   # no updates, so the fine-tuned model must equal the start
+    second = train_one_backbone(params, "resnet18", train_df, val_df, torch.device("cpu"),
+                                pretrained=False, epochs=1, out_dir=tmp_path / "second",
+                                init_checkpoint=tmp_path / "first" / "best.pt", run_name="ft")
+    a = torch.load(first["checkpoint"], weights_only=False)["state_dict"]
+    b = torch.load(second["checkpoint"], weights_only=False)["state_dict"]
+    weights = [k for k in a if "running" not in k and "num_batches" not in k]
+    assert all(torch.equal(a[k], b[k]) for k in weights)
+
+
+def test_train_one_backbone_rejects_other_backbone(params, tmp_path):
+    torch.save({"backbone": "resnet50", "state_dict": {}}, tmp_path / "other.pt")
+    with pytest.raises(ValueError, match="resnet50"):
+        train_one_backbone(params, "resnet18", load_table(params, ["train"]),
+                           load_table(params, ["val"]), torch.device("cpu"), pretrained=False,
+                           epochs=1, out_dir=tmp_path / "x", init_checkpoint=tmp_path / "other.pt")
+
+
+def test_freeze_bn_keeps_batchnorm_stats(params, tmp_path):
+    mlflow.set_tracking_uri(f"sqlite:///{tmp_path / 'mlflow.db'}")
+    mlflow.create_experiment("test", artifact_location=(tmp_path / "artifacts").as_uri())
+    mlflow.set_experiment("test")
+    train_df, val_df = load_table(params, ["train"]), load_table(params, ["val"])
+    first = train_one_backbone(params, "resnet18", train_df, val_df, torch.device("cpu"),
+                               pretrained=False, epochs=1, out_dir=tmp_path / "first")
+    second = train_one_backbone(params, "resnet18", train_df, val_df, torch.device("cpu"),
+                                pretrained=False, epochs=1, out_dir=tmp_path / "second",
+                                init_checkpoint=tmp_path / "first" / "best.pt", freeze_bn=True)
+    a = torch.load(first["checkpoint"], weights_only=False)["state_dict"]
+    b = torch.load(second["checkpoint"], weights_only=False)["state_dict"]
+    bn = [k for k in a if "bn" in k]
+    conv = [k for k in a if "conv" in k and k.endswith("weight")]
+    assert bn and all(torch.equal(a[k], b[k]) for k in bn)        # stats and scale/shift kept
+    assert any(not torch.equal(a[k], b[k]) for k in conv)          # other weights still train
