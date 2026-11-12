@@ -1,6 +1,8 @@
 """Tests for src/notify.py and the command list in src/training/pipeline.py."""
 import json
 
+import requests
+
 from src.notify import build_message, send
 from src.training.dataset import load_params
 from src.training.pipeline import STEPS, commands
@@ -10,16 +12,59 @@ def test_message_includes_steps_and_bias_alert(tmp_path):
     summary = tmp_path / "s.json"
     summary.write_text(json.dumps({"steps": [{"step": "bias", "exit_code": 0, "seconds": 3}],
                                    "selected": {"model": "fusion_oof", "bias_result": "FAIL", "reason": "best"}}))
-    msg = build_message("success", "model pipeline", summary)
-    body = msg.get_content()
-    assert "[SkinSort]" in msg["Subject"] and "- bias: exit 0" in body and "ALERT" in body
+    title, body = build_message("success", "model pipeline", summary)
+    assert title == "SkinSort model pipeline: success" and "- bias: exit 0" in body and "ALERT" in body
 
 
-def test_send_without_settings_only_prints(monkeypatch, capsys):
-    for key in ("SMTP_USER", "SMTP_PASSWORD", "NOTIFY_TO"):
+CHANNEL_VARS = ("SLACK_WEBHOOK_URL", "ALERT_EMAIL_TO", "SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD")
+
+
+class FakeResponse:
+    def __init__(self, text, status=200):
+        self.text, self.status_code = text, status
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"HTTP {self.status_code}")
+
+
+def test_send_without_channels_only_logs(monkeypatch, capsys):
+    for key in CHANNEL_VARS:
         monkeypatch.delenv(key, raising=False)
-    assert send(build_message("failure", "x", None)) is False
-    assert "printing instead" in capsys.readouterr().out
+    assert send("t", "b", "failure") == {}
+    assert "no channel configured" in capsys.readouterr().out
+
+
+def test_slack_delivered_only_when_slack_says_ok(monkeypatch):
+    for key in CHANNEL_VARS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://hooks.slack.com/services/T/B/X")
+    posted = {}
+
+    def fake_post(url, json, timeout, allow_redirects):
+        posted.update(json)
+        return FakeResponse("ok")
+    monkeypatch.setattr(requests, "post", fake_post)
+    assert send("SkinSort model pipeline: failure", "body", "failure") == {"slack": True}
+    assert posted["text"].startswith(":rotating_light: *SkinSort model pipeline: failure*")
+
+    # a malformed webhook is redirected to Slack's docs page with HTTP 200: not delivered
+    monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResponse("<html>docs</html>"))
+    assert send("t", "b", "success") == {"slack": False}
+    monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResponse("no_service", 404))
+    assert send("t", "b", "success") == {"slack": False}
+
+
+def test_email_copy_when_configured(monkeypatch):
+    import src.notify as notify
+    for key in CHANNEL_VARS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("ALERT_EMAIL_TO", "a@example.com, b@example.com")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    sent = {}
+    monkeypatch.setattr(notify, "_send_email", lambda to, title, body: sent.update(to=to, title=title))
+    assert send("t", "b", "success") == {"email": True}
+    assert sent["to"] == ["a@example.com", "b@example.com"]
 
 
 def test_pipeline_commands_cover_all_steps():

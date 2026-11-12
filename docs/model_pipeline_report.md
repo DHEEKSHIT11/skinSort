@@ -344,9 +344,9 @@ Two workflows, modelled on the course `ci_cd_pipeline.yml`: `.github/workflows/m
 | Lint + unit tests on every push / PR | 7.1 | `flake8 src tests`, `pytest tests` (synthetic data; also pass inside the Docker image) |
 | Training on push to main (or a new `Data-Pipeline/dvc.lock`) | 7.1 | GCP auth → `dvc pull` → backbone from GCS → `python -m src.training.pipeline` (reweighted fusion head + out-of-fold tau). Backbones need a GPU and are trained on the GCP VM |
 | Automated validation | 7.2 | registry gate in the pipeline (validation AUC floor, calibration, no regression) |
-| Automated bias detection | 7.3 | `bias.py` + mitigation in the pipeline; a failing slice sends an alert email |
+| Automated bias detection | 7.3 | `bias.py` + mitigation in the pipeline; a failing slice sends a Slack alert |
 | Registry push | 7.4 | `registry push` (GCS, versioned) + serving image to Artifact Registry |
-| Notifications | 7.5 | `src/notify.py` (smtplib, like the course Airflow lab): failure, success, bias alert |
+| Notifications | 7.5 | `src/notify.py`: Slack (`SLACK_WEBHOOK_URL`, same channel and delivery check as the data pipeline alerts) with an optional email copy (smtplib, like the course Airflow lab): failure, success, bias alert |
 | Rollback | 7.6 | `registry compare-deployed`: a model worse than the deployed one on validation is not pushed, so the deployed version stays; `rollback-gcs` for a manual rollback |
 
 Without the `GCP_SA_KEY` secret, the CD pipeline job is skipped with a notice instead of failing; pull requests only show the CI test runs. Reports, `mlflow.db`
@@ -354,7 +354,7 @@ and `mlruns/` are kept as run artifacts.
 
 **Status.** CI runs on pull request #4 and passes (lint + 71 tests). CD has not run yet (it starts once the file is on `main`). It needs:
 - a push
-- the secrets `GCP_SA_KEY`, `GCP_PROJECT_ID`, `SMTP_USER`, `SMTP_PASSWORD`, `NOTIFY_TO`
+- the secrets `GCP_SA_KEY`, `GCP_PROJECT_ID`, `SLACK_WEBHOOK_URL` (optional email: `ALERT_EMAIL_TO`, `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`)
 - an Artifact Registry repository `skinsort`
 - the backbone uploaded once to `gs://skinsort-data-asdr/models/backbones/efficientnet_b3/best.pt`
 

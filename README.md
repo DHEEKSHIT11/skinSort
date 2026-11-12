@@ -256,8 +256,8 @@ flowchart TD
 1. Every push / PR touching model code: unit tests (`pytest tests/`).
 2. After CI passes on `main` (or a manual run; skipped if GCP secrets are not set), `model-pipeline-cd.yml`: pull the DVC data and the GPU-trained backbone from GCS, then `python -m src.training.pipeline`: out-of-fold training of the phone model → bias check + mitigation → model selection → registry gate on validation metrics (AUC ≥ 0.75, calibration ≤ 0.05).
 3. Compare with the deployed model (`gs://.../skinsort-triage/latest.json`, validation AUC may not drop more than 0.01); if the new one is worse nothing is pushed, so the deployed version stays. Manual rollback: `python -m src.training.registry rollback-gcs`.
-4. A bias gap above `bias.max_recall_gap` sends an alert email.
-5. Push the model to GCS (versioned) and the serving image to Artifact Registry; email on success or failure.
+4. A bias gap above `bias.max_recall_gap` sends an alert to Slack (`#pipeline-alerts`, same webhook as the data pipeline).
+5. Push the model to GCS (versioned) and the serving image to Artifact Registry; Slack message on success or failure (optional email copy).
 
 Image backbones need a GPU and are trained on the GCP VM, not in GitHub Actions. With branch protection on `main` (merges only through a reviewed pull request), no model reaches production without human sign-off.
 

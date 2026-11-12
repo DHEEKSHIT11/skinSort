@@ -8,16 +8,18 @@
 #   3. gate against the DEPLOYED model (GCS latest.json, validation metrics): if the new one is
 #      worse, nothing is pushed and the deployed version stays. Manual rollback of a bad
 #      deployment: `python -m src.training.registry rollback-gcs` + re-tag the image.
-#   4. bias: a bias gap above the limit sends an alert email (assignment: "alert or block")
+#   4. bias: a bias gap above the limit sends an alert (assignment: "alert or block")
 #   5. push the model to GCS (versioned, version.txt) and the serving image to Artifact Registry
-#   6. email on success and on failure (src/notify.py, smtplib like the course Airflow lab)
+#   6. Slack message on success and on failure (src/notify.py: same channels and rules as the data
+#      pipeline alerts, #pipeline-alerts; optional email copy with smtplib like the course Airflow lab)
 # Without the GCP_SA_KEY secret the pipeline job is skipped with a notice.
 # The image backbones themselves need a GPU and are trained on the GCP VM
 # (python -m src.training.train), not on GitHub runners. The runner only has the backbone it
 # downloads and the phone model it builds, so model selection here compares that model with the
 # baselines; the full comparison (all backbones and earlier phone versions) is in the report.
 #
-# Secrets: GCP_SA_KEY (service-account JSON), GCP_PROJECT_ID, SMTP_USER, SMTP_PASSWORD, NOTIFY_TO.
+# Secrets: GCP_SA_KEY (service-account JSON), GCP_PROJECT_ID, SLACK_WEBHOOK_URL (the data pipeline's
+# webhook); optional email copy: ALERT_EMAIL_TO, SMTP_HOST, SMTP_USER, SMTP_PASSWORD.
 # One-time setup: Artifact Registry repo `skinsort` in GCP_REGION, and the backbone at
 # gs://skinsort-data-asdr/models/backbones/efficientnet_b3/best.pt.
 # Note: GitHub starts workflow_run workflows only from the default branch, so this runs once
@@ -60,9 +62,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
       SMTP_USER: ${{ secrets.SMTP_USER }}
       SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-      NOTIFY_TO: ${{ secrets.NOTIFY_TO }}
     steps:
       - uses: actions/checkout@v4
         with:
