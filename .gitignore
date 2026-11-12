@@ -57,3 +57,5 @@ checkpoints/
 *.onnx
 optuna*.db
 mlflow.db
+# exported Production model for the serving image (made by registry export)
+models/triage_model/
