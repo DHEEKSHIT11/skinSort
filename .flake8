@@ -1,0 +1,5 @@
+[flake8]
+# model pipeline code (src/, tests/); the data pipeline has its own config in Data-Pipeline/setup.cfg
+max-line-length = 130
+extend-ignore = E731
+exclude = .venv,Data-Pipeline,outputs,mlruns,models
