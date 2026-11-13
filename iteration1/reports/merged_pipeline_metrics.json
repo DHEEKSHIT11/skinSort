@@ -1,0 +1,77 @@
+{
+  "data": {
+    "manifest": "/tmp/skinsort_sample/manifest.jsonl",
+    "rows": 180,
+    "label_counts": {
+      "priority": 60,
+      "routine": 60,
+      "urgent": 60
+    },
+    "source": "ISIC public thumbnail sample"
+  },
+  "model_1_severity": {
+    "train_rows": 135,
+    "test_rows": 45,
+    "labels": [
+      "priority",
+      "routine",
+      "urgent"
+    ],
+    "accuracy": 0.8222222222222222,
+    "balanced_accuracy": 0.8222222222222223,
+    "macro_f1": 0.8092320261437909,
+    "log_loss": 0.3420705497264862,
+    "confusion_matrix": [
+      [
+        15,
+        0,
+        0
+      ],
+      [
+        0,
+        14,
+        1
+      ],
+      [
+        2,
+        5,
+        8
+      ]
+    ],
+    "recall_by_class": {
+      "priority": 1.0,
+      "routine": 0.9333333333333333,
+      "urgent": 0.5333333333333333
+    },
+    "class_counts_test": {
+      "routine": 15,
+      "priority": 15,
+      "urgent": 15
+    },
+    "artifact": "/tmp/skinsort_sample/severity_model.joblib"
+  },
+  "model_2_queue": {
+    "metrics": {
+      "train_rows": 5000,
+      "test_rows": 45,
+      "pairwise_accuracy_vs_prototype_policy": 0.898331114979011,
+      "rank_correlation_vs_prototype_policy": 0.9372859025032937
+    },
+    "target_definition": "transparent prototype policy, not clinician labels",
+    "features": [
+      "p_routine",
+      "p_priority",
+      "p_urgent",
+      "wait_hours",
+      "hours_to_latest",
+      "missing_deadline",
+      "overdue"
+    ]
+  },
+  "merged_pipeline": {
+    "model_1_probabilities_passed_to_model_2": true,
+    "model_1_probability_rows": 45,
+    "model_2_queue_scores": 45,
+    "urgent_safety_overrides": 7
+  }
+}
