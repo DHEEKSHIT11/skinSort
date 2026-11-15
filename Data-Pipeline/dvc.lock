@@ -174,3 +174,39 @@ stages:
       hash: md5
       md5: 0ffb7abbc288fefbc0d8edc355b14f9e
       size: 10599735
+  bias_slicing:
+    cmd: python -m scripts.validation.bias
+    deps:
+    - path: data/processed/dataset.csv
+      hash: md5
+      md5: 0ffb7abbc288fefbc0d8edc355b14f9e
+      size: 10599735
+    - path: scripts/validation/bias.py
+      hash: md5
+      md5: 147cb913a89717f9ad8ab3719a9353a8
+      size: 15570
+    params:
+      params.yaml:
+        bias:
+          slices:
+          - sex
+          - age_group
+          - body_site
+          - skin_tone
+          - source
+          min_urgent_cases: 20
+          max_recall_gap: 0.05
+          alert_on_gap: true
+        preprocess.transform.age_bins:
+        - 0
+        - 30
+        - 45
+        - 60
+        - 75
+        - 120
+        seed: 42
+    outs:
+    - path: data/processed/sample_weights.csv
+      hash: md5
+      md5: d5cac289d0a10843cb2b5a61fe7c662a
+      size: 649496
