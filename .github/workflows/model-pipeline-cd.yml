@@ -1,7 +1,8 @@
 # Model pipeline CD (assignment §7.2-7.6), following the course root ci_cd_pipeline.yml and
 # Github_Labs/Lab4: train -> validate -> bias -> registry -> Docker image to Artifact Registry ->
 # notification. Runs after model-pipeline-ci passes on main (workflow_run), or by hand.
-#   1. GCP auth (google-github-actions/auth@v2), DVC pull of the processed data,
+#   1. Keyless GCP auth (google-github-actions/auth@v2 with Workload Identity Federation, no JSON
+#      key), DVC pull of the processed data,
 #      download of the GPU-trained backbone checkpoint from GCS
 #   2. python -m src.training.pipeline: reweighted fusion head + out-of-fold tau -> bias check
 #      and mitigation -> model selection -> registry gate on validation metrics -> export
@@ -12,16 +13,19 @@
 #   5. push the model to GCS (versioned, version.txt) and the serving image to Artifact Registry
 #   6. Slack message on success and on failure (src/notify.py: same channels and rules as the data
 #      pipeline alerts, #pipeline-alerts; optional email copy with smtplib like the course Airflow lab)
-# Without the GCP_SA_KEY secret the pipeline job is skipped with a notice.
+# Without the GCP_WORKLOAD_IDENTITY_PROVIDER secret the pipeline job is skipped with a notice.
 # The image backbones themselves need a GPU and are trained on the GCP VM
 # (python -m src.training.train), not on GitHub runners. The runner only has the backbone it
 # downloads and the phone model it builds, so model selection here compares that model with the
 # baselines; the full comparison (all backbones and earlier phone versions) is in the report.
 #
-# Secrets: GCP_SA_KEY (service-account JSON), GCP_PROJECT_ID, SLACK_WEBHOOK_URL (the data pipeline's
-# webhook); optional email copy: ALERT_EMAIL_TO, SMTP_HOST, SMTP_USER, SMTP_PASSWORD.
-# One-time setup: Artifact Registry repo `skinsort` in GCP_REGION, and the backbone at
-# gs://skinsort-data-asdr/models/backbones/efficientnet_b3/best.pt.
+# Secrets: GCP_WORKLOAD_IDENTITY_PROVIDER (projects/<number>/locations/global/workloadIdentityPools/
+# github/providers/skinsort-repo), GCP_SERVICE_ACCOUNT (skinsort-pipeline@<project>.iam.gserviceaccount.com,
+# the data pipeline's service account), GCP_PROJECT_ID, SLACK_WEBHOOK_URL (the data pipeline's webhook);
+# optional email copy: ALERT_EMAIL_TO, SMTP_HOST, SMTP_USER, SMTP_PASSWORD. No service-account key is used:
+# GitHub proves which repository is running and Google lets only this repository act as the service account.
+# One-time setup: the Workload Identity pool/provider (docs/model_pipeline_report.md), Artifact Registry repo `skinsort` in
+# GCP_REGION, and the backbone at gs://skinsort-data-asdr/models/backbones/efficientnet_b3/best.pt.
 # Note: GitHub starts workflow_run workflows only from the default branch, so this runs once
 # the file is on main.
 name: model-pipeline-cd
@@ -51,16 +55,21 @@ jobs:
     steps:
       - id: check
         env:
-          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          WIF_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          WIF_SA: ${{ secrets.GCP_SERVICE_ACCOUNT }}
         run: |
-          if [ -n "$GCP_SA_KEY" ]; then echo "has_gcp=true" >> "$GITHUB_OUTPUT"
-          else echo "has_gcp=false" >> "$GITHUB_OUTPUT"; echo "::notice::GCP_SA_KEY not set; model pipeline job skipped"; fi
+          if [ -n "$WIF_PROVIDER" ] && [ -n "$WIF_SA" ]; then echo "has_gcp=true" >> "$GITHUB_OUTPUT"
+          else echo "has_gcp=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::GCP_WORKLOAD_IDENTITY_PROVIDER / GCP_SERVICE_ACCOUNT not set; model pipeline job skipped"; fi
 
   pipeline:
     needs: check-secrets
     if: needs.check-secrets.outputs.has_gcp == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    permissions:
+      contents: read
+      id-token: write    # lets GitHub issue the identity token used for keyless GCP login
     env:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
       ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
@@ -81,10 +90,11 @@ jobs:
           pip install --index-url https://download.pytorch.org/whl/cpu torch==2.15.0 torchvision==0.29.2
           pip install -r requirements-model.txt
 
-      - name: Authenticate with GCP
+      - name: Authenticate with GCP (keyless, Workload Identity Federation)
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ secrets.GCP_PROJECT_ID }}

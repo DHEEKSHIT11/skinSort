@@ -349,14 +349,30 @@ Two workflows, modelled on the course `ci_cd_pipeline.yml`: `.github/workflows/m
 | Notifications | 7.5 | `src/notify.py`: Slack (`SLACK_WEBHOOK_URL`, same channel and delivery check as the data pipeline alerts) with an optional email copy (smtplib, like the course Airflow lab): failure, success, bias alert |
 | Rollback | 7.6 | `registry compare-deployed`: a model worse than the deployed one on validation is not pushed, so the deployed version stays; `rollback-gcs` for a manual rollback |
 
-Without the `GCP_SA_KEY` secret, the CD pipeline job is skipped with a notice instead of failing; pull requests only show the CI test runs. Reports, `mlflow.db`
+GCP login is keyless (Workload Identity Federation): GitHub proves which repository is running and Google lets only this repository act as the data pipeline's service account `skinsort-pipeline`, so no JSON key exists to leak. Without the `GCP_WORKLOAD_IDENTITY_PROVIDER` / `GCP_SERVICE_ACCOUNT` secrets, the CD pipeline job is skipped with a notice instead of failing; pull requests only show the CI test runs. Reports, `mlflow.db`
 and `mlruns/` are kept as run artifacts.
 
 **Status.** CI runs on pull request #4 and passes (lint + 71 tests). CD has not run yet (it starts once the file is on `main`). It needs:
-- a push
-- the secrets `GCP_SA_KEY`, `GCP_PROJECT_ID`, `SLACK_WEBHOOK_URL` (optional email: `ALERT_EMAIL_TO`, `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`)
-- an Artifact Registry repository `skinsort`
-- the backbone uploaded once to `gs://skinsort-data-asdr/models/backbones/efficientnet_b3/best.pt`
+- the merge to `main`
+- the one-time keyless setup below (project owner), then the secrets `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT`, `GCP_PROJECT_ID`, `SLACK_WEBHOOK_URL` (optional email: `ALERT_EMAIL_TO`, `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`)
+- done on 2026-11-15: Artifact Registry repository `skinsort` (us-central1); the three backbones in `gs://skinsort-data-asdr/models/backbones/<name>/best.pt`; a backup of `mlflow.db` and `mlruns/` in `gs://skinsort-data-asdr/mlflow/` (checksums match the local files)
+
+One-time keyless setup (project owner):
+```bash
+gcloud services enable iamcredentials.googleapis.com sts.googleapis.com --project=skinsort-512623
+gcloud iam workload-identity-pools create github --project=skinsort-512623 --location=global --display-name="GitHub"
+gcloud iam workload-identity-pools providers create-oidc skinsort-repo --project=skinsort-512623 --location=global \
+  --workload-identity-pool=github --display-name="skinSort repo" --issuer-uri="https://token.actions.githubusercontent.com" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+  --attribute-condition="assertion.repository=='DHEEKSHIT11/skinSort'"
+PROJECT_NUMBER=$(gcloud projects describe skinsort-512623 --format='value(projectNumber)')
+gcloud iam service-accounts add-iam-policy-binding skinsort-pipeline@skinsort-512623.iam.gserviceaccount.com \
+  --project=skinsort-512623 --role=roles/iam.workloadIdentityUser \
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github/attribute.repository/DHEEKSHIT11/skinSort"
+gcloud projects add-iam-policy-binding skinsort-512623 \
+  --member=serviceAccount:skinsort-pipeline@skinsort-512623.iam.gserviceaccount.com --role=roles/artifactregistry.writer
+echo "GCP_WORKLOAD_IDENTITY_PROVIDER = projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github/providers/skinsort-repo"
+```
 
 What has been checked locally:
 - The tests pass in a clean container.
