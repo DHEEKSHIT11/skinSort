@@ -1,0 +1,21 @@
+# Keep the build context small: code, params and the exported model only
+.git
+.venv
+venv
+**/__pycache__
+**/.pytest_cache
+.DS_Store
+.claude
+outputs
+mlruns
+mlartifacts
+mlflow.db
+Data-Pipeline/data
+Data-Pipeline/logs
+Data-Pipeline/reference
+*.pt
+!models/triage_model/**/*.pt
+.env
+.env.*
+*-sa.json
+*credentials*.json

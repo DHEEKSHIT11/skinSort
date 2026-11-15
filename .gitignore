@@ -45,3 +45,17 @@ Data-Pipeline/logs/*
 .DS_Store
 .idea/
 .vscode/
+
+# Model training outputs (tracked in MLflow / registry, not Git)
+mlruns/
+mlartifacts/
+outputs/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.onnx
+optuna*.db
+mlflow.db
+# exported Production model for the serving image (made by registry export)
+models/triage_model/

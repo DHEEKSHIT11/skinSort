@@ -129,6 +129,33 @@ Two-stage training:
 
 Outputs are calibrated so `P(urgent)` can drive queue ordering. A photo-only baseline is kept for comparison; if answers don't help, we report that.
 
+### Model pipeline
+
+Final write-up: [docs/model_pipeline_report.md](docs/model_pipeline_report.md) (working log: [docs/model_pipeline_plan.md](docs/model_pipeline_plan.md)). All settings are in `params.yaml`; every run is tracked in MLflow (`mlflow ui --backend-store-uri sqlite:///mlflow.db`) and tagged with the DVC data version.
+
+| Step | Command | Output |
+|---|---|---|
+| Train image backbones (GPU VM) | `python -m src.training.train` | `outputs/models/<backbone>/best.pt` |
+| Phone model with out-of-fold threshold | `python -m src.training.fit_final --image-checkpoint outputs/models/efficientnet_b3/best.pt --trained-on train --name fusion_oof` | `outputs/models/fusion_oof/`, `outputs/evaluation/fusion_oof/` |
+| Validate an image model on a hold-out set | `python -m src.training.evaluate --checkpoint ... --val-split val --test-split test --target urgent_recall_target --name image_main` | metrics, confusion matrix, calibration plot |
+| Bias check (Fairlearn slicing) + mitigation | `python -m src.training.bias --name fusion_oof --include-val` | `outputs/bias/<name>/` report + charts |
+| Hyperparameter tuning (Hyperopt TPE) | `python -m src.training.tune --image-checkpoint ...` | `outputs/tuning/` |
+| Sensitivity (SHAP) / robustness / thresholds | `python -m src.training.explain --checkpoint ...`, `python -m src.training.analysis --checkpoint ...` | `outputs/explain/`, `outputs/analysis/` |
+| Model selection after bias check | `python -m src.training.select_model` | `outputs/selection/` comparison charts + `model_selection.md` |
+| Registry: register (gate), rollback, export, push | `python -m src.training.registry register --from-selection outputs/selection/model_selection.json` | MLflow `skinsort-triage@production` |
+| Everything after the GPU step | `python -m src.training.pipeline` | fit_final (reweighted) → bias + mitigation → select → registry → export → figures (`docs/figures/`) |
+| Serve | `docker compose -f docker/docker-compose.yml up --build` | `POST localhost:8080/triage` |
+
+Current Production model (`skinsort-triage` v3): `fusion_oof_rw` — efficientnet_b3 image features + the 6 answers, fusion head reweighted by sex × body site (Kamiran & Calders), threshold fitted out-of-fold on 1,946 phone photos (209 urgent). Serving applies the data pipeline's preprocessing (centre crop, Shades-of-Gray) to raw uploads.
+
+| | Main test (dermoscopy, image model) | Phone test (`pad_test`, fusion_oof_rw) |
+|---|---|---|
+| Urgent recall at tau | 0.873 (target 0.90) | 0.743 (target 0.85) |
+| Calibration error | 0.031 ✅ | 0.021 ✅ |
+| Urgent AUC | 0.934 | 0.694 |
+
+Bias (out-of-fold phone photos): reweighing closes the acral and skin-tone gaps; the sex gap (0.069) closes to 0.039 with a lower threshold for women, which needs sex in the intake form. Known limits: `pad_test` has 34 SCC and 1 melanoma among its 35 urgent photos; the model leans on missing-answer patterns from how PAD-UFES-20 was collected (recall ≈ 0.80 on fully answered photos). Charts: [docs/figures](docs/figures/README.md).
+
 ---
 
 ## Repository Structure
@@ -164,7 +191,7 @@ skinsort/
 
 ### Prerequisites
 
-- Python 3.10+
+- Python 3.11 (pinned pandas 3.1 needs it)
 - Docker and Docker Compose
 - DVC with the GCS extra (`pip install "dvc[gs]"`)
 - Google Cloud SDK, authenticated with an account that has access to the project bucket
@@ -180,27 +207,30 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
 gcloud auth application-default login
-dvc pull                            # fetch the current data version
+cd Data-Pipeline && dvc pull dvc.yaml && cd ..   # processed data (~0.9 GB) at the version in Data-Pipeline/dvc.lock
 ```
 
 ### Run the pipeline
 
 ```bash
-dvc repro                           # re-runs only the stages that changed
+(cd Data-Pipeline && dvc repro)     # data pipeline: re-runs only the stages that changed
+python -m src.training.pipeline     # model pipeline (needs outputs/models/<backbone>/best.pt from the GPU run)
 ```
 
 ### Run the stack locally
 
 ```bash
-docker compose up --build
+docker compose -f docker/docker-compose.yml up --build   # model trainer, then the triage API on :8080
 ```
 
-Starts the web app, triage API, inference service, and monitoring stack.
+The root `docker-compose.yml` (web app, inference service, monitoring) and root `dvc.yaml` are placeholders for later phases.
 
 ### Tests
 
 ```bash
-pytest tests/
+pytest tests/                       # model pipeline (63+ tests, synthetic data)
+flake8 src tests
+(cd Data-Pipeline && pytest)        # data pipeline
 ```
 
 ---
@@ -221,15 +251,15 @@ flowchart TD
     HC -->|pass| PROD[Shift traffic]
 ```
 
-**Model releases**
+**Model releases** (`.github/workflows/model-pipeline-ci.yml` for tests, `model-pipeline-cd.yml` for the GCP pipeline)
 
-1. Train on Vertex AI with a pinned DVC data version; log to MLflow.
-2. Auto-compare against the production model on frozen test sets: urgent recall, calibration, skin-tone fairness.
-3. Reject unless at least as good on **every** check.
-4. Team member reviews and approves.
-5. Promote to `Production` in the MLflow registry; the inference service loads it.
+1. Every push / PR touching model code: unit tests (`pytest tests/`).
+2. After CI passes on `main` (or a manual run; skipped if GCP secrets are not set), `model-pipeline-cd.yml`: pull the DVC data and the GPU-trained backbone from GCS, then `python -m src.training.pipeline`: out-of-fold training of the phone model → bias check + mitigation → model selection → registry gate on validation metrics (AUC ≥ 0.75, calibration ≤ 0.05).
+3. Compare with the deployed model (`gs://.../skinsort-triage/latest.json`, validation AUC may not drop more than 0.01); if the new one is worse nothing is pushed, so the deployed version stays. Manual rollback: `python -m src.training.registry rollback-gcs`.
+4. A bias gap above `bias.max_recall_gap` sends an alert to Slack (`#pipeline-alerts`, same webhook as the data pipeline).
+5. Push the model to GCS (versioned) and the serving image to Artifact Registry; Slack message on success or failure (optional email copy).
 
-No model reaches production without human sign-off.
+Image backbones need a GPU and are trained on the GCP VM, not in GitHub Actions. With branch protection on `main` (merges only through a reviewed pull request), no model reaches production without human sign-off.
 
 ---
 

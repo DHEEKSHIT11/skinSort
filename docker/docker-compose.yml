@@ -1,0 +1,38 @@
+# Train-then-serve, following the course Docker_Labs/Lab2 compose pattern:
+# the trainer runs the model pipeline and exports the Production model to a shared
+# folder; the serving service starts only after the trainer finished successfully.
+#
+#   docker compose -f docker/docker-compose.yml up --build      # run from the repository root
+#   curl -F photo=@some_photo.jpg -F q_changed=yes http://localhost:8080/triage
+#
+# The repository is mounted at the SAME absolute path inside the trainer, because
+# mlflow.db stores absolute artifact paths (mlruns/...). Needs the DVC data
+# (Data-Pipeline/data/processed) and outputs/models/<backbone>/best.pt from the GPU run.
+
+services:
+  trainer:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: trainer
+    image: skinsort-trainer
+    working_dir: ${PWD}
+    volumes:
+      - ${PWD}:${PWD}
+    command: ["--fail-if-rejected"]
+
+  serving:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: serving_base           # no baked-in model: it is mounted from the trainer's export
+    image: skinsort-serving-base
+    ports:
+      - "8080:8080"
+    environment:
+      MODEL_DIR: /exchange/triage_model
+    volumes:
+      - ../models:/exchange:ro          # the model the trainer just exported
+    depends_on:
+      trainer:
+        condition: service_completed_successfully
