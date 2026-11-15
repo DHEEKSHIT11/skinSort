@@ -56,6 +56,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 OUT_DIR = ROOT / "outputs" / "selection"
+BIAS_DIR = ROOT / "outputs" / "bias"
 MODELS_DIR = ROOT / "outputs" / "models"
 
 
@@ -181,10 +182,14 @@ def build_baselines(params: Dict[str, Any], image_checkpoint: Path, device: torc
 
 # ------------------------------------------------------------ stage 2: scoring
 
-def candidate_summary(params: Dict[str, Any], name: str, eval_dir: Path = EVAL_DIR) -> Dict[str, Any]:
-    """Same validation numbers for every candidate, on the pad_val photos."""
+def candidate_summary(params: Dict[str, Any], name: str, eval_dir: Path = EVAL_DIR,
+                      bias_dir: Path = BIAS_DIR) -> Dict[str, Any]:
+    """Same validation numbers for every candidate, on the pad_val photos. A model that ships
+    per-group thresholds (bias.py --deploy) is scored with them: recall, flagged share and bias
+    are those of the model as deployed (AUC and calibration do not depend on the threshold)."""
     metrics = json.loads((eval_dir / name / "metrics.json").read_text())
-    preds = pd.read_csv(eval_dir / name / "predictions.csv")
+    deployed = bias_dir / name / "predictions_deployed.csv"
+    preds = pd.read_csv(deployed if deployed.exists() else eval_dir / name / "predictions.csv")
     val = preds[preds["eval_split"] == "val"]
     pad_val_ids = set(load_table(params, [params["data"]["splits"]["pad_val"]])["image_id"])
     on_pad_val = val[val["image_id"].isin(pad_val_ids)]
@@ -206,6 +211,7 @@ def candidate_summary(params: Dict[str, Any], name: str, eval_dir: Path = EVAL_D
         "val_urgent_recall": float((flagged & urgent).sum() / max(urgent.sum(), 1)),
         "val_flagged_share": float(flagged.mean()),
         "bias_result": bias_result, "bias_slices": statuses,
+        "group_thresholds": "deployed" if deployed.exists() else "none",
         "bias_failed_slices": sum(v == "FAIL" for v in statuses.values()),
         "test_urgent_auc": metrics["test"]["urgent_auc"], "test_urgent_recall": metrics["test"]["urgent_recall"],
         "test_calibration_error": metrics["test"]["calibration_error"],

@@ -17,15 +17,19 @@ after the bias check. It then registers the model with a validation gate and ser
 - Inputs: efficientnet_b3 image features plus the answers.
 - Fusion head trained with Kamiran & Calders reweighing by sex × body site.
 - Calibration and tau 0.076 fitted out-of-fold on 1,946 phone photos (209 urgent).
-- Produced by one clean run of `python -m src.training.pipeline` (all six steps).
+- Bias mitigation shipped in the model: per-group urgent thresholds for sex and age group, each group fitted to
+  reach 0.90 recall (section 5). They are used when the intake gives sex / age; otherwise tau 0.076.
+- Produced by `python -m src.training.pipeline` (all six steps); the CD workflow runs the same pipeline on `main`.
 
 | Test set | Model | Urgent recall @ tau (target) | Precision | Flagged | Urgent AUC | Calibration error (≤ 0.05) |
 |---|---|---|---|---|---|---|
 | `test`: 2,868 dermoscopy photos, 630 urgent | efficientnet_b3 image model | 0.873 (0.90) ❌ | 0.597 | 32% | 0.934 | 0.031 ✅ |
-| `pad_test`: 339 phone photos, 35 urgent | fusion_oof_rw | 0.743 (0.85) ❌ | 0.158 | 49% | 0.694 | 0.021 ✅ |
+| `pad_test`: 339 phone photos, 35 urgent | fusion_oof_rw, one threshold | 0.743 (0.85) ❌ | 0.158 | 49% | 0.694 | 0.021 ✅ |
+| `pad_test` | fusion_oof_rw + per-group thresholds (as deployed) | 0.857 (0.85) ✅ | — | 61% | 0.694 | 0.021 ✅ |
 
-Neither recall target is met. For phone photos the more reliable estimate is out-of-fold (209 urgent): recall
-0.852 at 52% flagged. On photos where every answer was given it is 0.796 (section 7.3), and the out-of-fold
+With one threshold neither recall target is met. The per-group thresholds raise phone recall but flag more photos
+(section 5). For phone photos the more reliable estimate is out-of-fold (209 urgent): recall 0.852 at 52% flagged
+with one threshold, 0.914 at 62% flagged with the per-group thresholds. On photos where every answer was given it is 0.796 (section 7.3), and the out-of-fold
 estimate is itself slightly optimistic (section 4).
 
 ## 2. Data (PDF §2.1, §8.2)
@@ -80,7 +84,7 @@ Phone photos look different from dermoscopy: image-only AUC drops to 0.66. A sma
 | Hyperopt-tuned head (`fusion_pad_tuned`) | tuned settings | pad_val 0.869, but tau did not transfer (pad_test recall 0.543) |
 | `fusion_oof` (`src/training/fit_final.py`) | original b3 backbone (never saw phone photos); tau and calibration fitted out-of-fold on pad_train + pad_val | best validation AUC; 3 bias slices fail |
 | `fusion_oof_tuned` | settings from Hyperopt on the final backbone | tied out-of-fold |
-| **`fusion_oof_rw`** | `fusion_oof` + Kamiran & Calders reweighing by sex × body site (`--reweight`) | **selected**: 1 bias slice fails |
+| **`fusion_oof_rw`** | `fusion_oof` + Kamiran & Calders reweighing by sex × body site (`--reweight`) + per-group thresholds for sex and age group | **selected**: bias PASS as deployed |
 
 **Leak found and fixed.** The fine-tuned backbone has image-only AUC 0.839 on pad_train but 0.743 on pad_val, so
 any score computed on pad_train was too optimistic. `train.py` now records `trained_on` in each checkpoint, and
@@ -103,7 +107,7 @@ failing, even though one fails 1 slice and another fails 3.
 |---|---|---|---|---|
 | fusion_pad_tuned | 0.869 | 31 urgent | inconclusive | filtered (too few urgent for tau) |
 | fusion_oof | 0.813 | 209 urgent | FAIL (3) | eligible |
-| **fusion_oof_rw** | **0.807** | 209 urgent | FAIL (1: sex) | **selected**: fewest failing slices within 0.02 AUC |
+| **fusion_oof_rw** | **0.807** | 209 urgent | PASS as deployed (FAIL with one threshold: sex) | **selected**: fewest failing slices within 0.02 AUC |
 | fusion_pad | 0.806 | 31 urgent | inconclusive | filtered |
 | fusion_oof_tuned | 0.800 | 209 urgent | FAIL | eligible |
 | baseline: answers only (logistic regression) | 0.781 | 209 | FAIL | baseline |
@@ -178,6 +182,30 @@ Per-group thresholds for the image model:
 | flagged share | 51.2% | 54.7% | 51.6% | 52–55% |
 | out-of-fold AUC | 0.774 | — | 0.769 | — |
 
+**Deployed mitigation** (`bias.py --deploy`, `params.yaml` `pipeline.deploy_thresholds: [sex, age_group]` and
+`bias.group_recall_target: 0.90`). The bias check in the pipeline is run on the model as deployed:
+
+| Out-of-fold (1,946 photos, 209 urgent) | One threshold | Per-group thresholds (deployed) |
+|---|---|---|
+| sex gap | 0.069 ❌ (female 0.81, male 0.88) | **0.012 ✅** (female 0.91, male 0.92) |
+| age group gap | 0.043 ✅ | **0.038 ✅** |
+| body site gap | 0.050 ✅ | **0.045 ✅** |
+| skin tone gap | 0.022 ✅ | **0.039 ✅** |
+| urgent recall | 0.852 | 0.914 |
+| flagged share | 51.6% (women 63%) | 62.5% (women 82%) |
+| pad_test recall / flagged | 0.743 / 49% | 0.857 / 61% |
+
+Shipped thresholds (fitted on all out-of-fold rows; global 0.076): women 0.048, men 0.074; age 45–60 0.058,
+60–75 0.064, 75+ 0.070. A person in several groups gets the lowest; nobody gets more than 0.076. The report's
+numbers use thresholds that never saw the row (other patient half for out-of-fold rows, validation for pad_test).
+The one-threshold report is kept in `outputs/bias/fusion_oof_rw/global_threshold/`.
+
+**Disclosure.** The deployed setting was chosen after comparing several options on the same out-of-fold rows:
+sex only (sex passes, age group then fails at 0.076), sex + age at a 0.85 group target (sex and body site fail),
+sex + age at 0.90 (all pass). Lowering the global threshold alone did not pass at any value (sex gap 0.07–0.10).
+The gaps are small next to their uncertainty (about ±0.07 per group with 50–110 urgent cases), so the PASS should
+be read as "no measurable gap", and it is checked again on every CD run.
+
 How each mitigation works:
 - **Reweighing** uses the same Kamiran & Calders formula the data pipeline exports for the model team
   (`Data-Pipeline/scripts/validation/bias.py`): weight = P(group) · P(label) / P(group, label). The weights are
@@ -187,10 +215,11 @@ How each mitigation works:
 
 Trade-offs:
 - Reweighing costs about 0.005 out-of-fold AUC and closes the acral and skin-tone gaps.
-- The remaining sex gap closes only with a lower threshold for women. That raises the share of women's photos
-  flagged from 63% to 74%, which means more doctor review and no extra misses.
-- A per-group threshold needs the group at prediction time. The intake today sends photo + answers only. So the
-  registered model uses the single tau, and the sex threshold is ready once the intake form asks for sex.
+- The sex gap closes only with lower thresholds. Women's photos flagged go from 63% to 82% and all photos from
+  52% to 62%: more doctor review, fewer missed urgent cases (recall 0.85 → 0.91).
+- A per-group threshold needs the group at prediction time. The API takes optional `sex` and `age` fields
+  (`src/serving/app.py`); without them the global threshold is used, so the bias check holds only when the intake
+  form asks for both.
 - The image model's age and body-site gaps would need more young-patient and acral urgent cases.
 
 **Dataset artifacts.**
@@ -333,7 +362,8 @@ The registry code is `src/training/registry.py` plus `src/serving/triage_model.p
   as in course Github_Labs/Lab4).
 - GCS numbering is its own, so CI runners with a fresh MLflow registry never collide.
 - CI pushes the serving image to Artifact Registry with the same number.
-- **Status:** written and tested against fake buckets; not uploaded yet (team decision).
+- **Status:** the first CD run on `main` (2026-11-15) pushed v1 to GCS and `skinsort-serving:v1` to Artifact
+  Registry. That run used one threshold (bias FAIL alert); the next run ships the per-group thresholds.
 
 ## 9. CI/CD (PDF §7)
 
@@ -405,7 +435,8 @@ docker compose -f docker/docker-compose.yml up --build
 
 1. **Recall targets not met** (0.873 / 0.743). The honest phone estimate is about 0.80 on fully answered photos.
 2. **Bias.**
-   - The remaining sex gap needs the intake to ask for sex (per-group threshold).
+   - The phone model passes only with the per-group thresholds, so the intake form must ask for sex and age.
+     It flags more photos (62%), especially women's (82%).
    - The image model has age and body-site gaps.
 3. **Data.**
    - Re-split the PAD photos stratified by diagnosis.
@@ -413,5 +444,6 @@ docker compose -f docker/docker-compose.yml up --build
    - The data pipeline's `sample_weights.csv` was never pushed to DVC; the model computes the same weights itself.
 4. **Portability.** `mlflow.db` and the `outputs/` JSON files hold absolute paths of this laptop. A shared MLflow
    server or a GCS artifact root would fix that.
-5. **Not done yet:** the GCS / Artifact Registry upload and the first GitHub CI run.
+5. **Slack:** the CD run's Slack messages were not delivered (the `SLACK_WEBHOOK_URL` secret was not an incoming
+   webhook URL); fixed by setting the secret, no code change.
 6. **Product:** a photo-quality check in the intake (see the robustness results).

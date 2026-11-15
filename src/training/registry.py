@@ -73,7 +73,21 @@ def gate(candidate: Dict[str, Any], production: Optional[Dict[str, Any]],
             "candidate_value": new, "production_value": old, "test_urgent_auc": test.get("urgent_auc")}
 
 
-def log_triage_model(checkpoint: Path, image_example: Optional[pd.DataFrame] = None):
+# optional intake fields the model reads when it ships per-group thresholds (bias.py --deploy)
+GROUP_INPUTS = {"sex": "string", "age": "double"}
+
+
+def model_signature(image_example: pd.DataFrame):
+    """Signature inferred from the example, plus the optional sex / age inputs."""
+    from mlflow.models import ModelSignature, infer_signature
+    from mlflow.types.schema import ColSpec, Schema
+    inputs = [c for c in infer_signature(image_example).inputs.inputs if c.name not in GROUP_INPUTS]
+    inputs += [ColSpec(dtype, name, required=False) for name, dtype in GROUP_INPUTS.items()]
+    return ModelSignature(inputs=Schema(inputs))
+
+
+def log_triage_model(checkpoint: Path, image_example: Optional[pd.DataFrame] = None,
+                     group_thresholds: Optional[Path] = None):
     ckpt = torch.load(checkpoint, map_location="cpu", weights_only=False)
     if "tau" not in ckpt:
         raise ValueError(f"{checkpoint} has no tau inside; build it with src.training.fit_final")
@@ -84,12 +98,17 @@ def log_triage_model(checkpoint: Path, image_example: Optional[pd.DataFrame] = N
             image_example[col] = image_example[col].astype(float)
     artifacts = {"fusion_checkpoint": str(checkpoint), "image_checkpoint": ckpt["image_checkpoint"],
                  "params": str(ROOT / "params.yaml")}
+    signature = None
+    if group_thresholds is not None:
+        artifacts["group_thresholds"] = str(group_thresholds)
+        if image_example is not None:
+            signature = model_signature(image_example)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         # models-from-code: MLflow runs this file to build the model instead of pickling it
         return mlflow.pyfunc.log_model(name="triage_model", python_model=str(MODEL_CODE),
                                        artifacts=artifacts, code_paths=[str(ROOT / "src")],
-                                       input_example=image_example,
+                                       input_example=image_example, signature=signature,
                                        pip_requirements=str(ROOT / "requirements-model.txt"))
 
 
@@ -118,7 +137,9 @@ def register(params: Dict[str, Any], checkpoint: Path, evaluation_dir: Path,
 
     with mlflow.start_run(run_name=f"register-{checkpoint.parent.name}") as run:
         mlflow.set_tags(data_version(params))
-        info = log_triage_model(checkpoint, image_example)
+        shipped = bias_dir / "deployed_thresholds.json" if bias_dir else None
+        info = log_triage_model(checkpoint, image_example,
+                                shipped if shipped is not None and shipped.exists() else None)
         mlflow.log_artifacts(str(evaluation_dir), "evaluation")
         if bias_dir and bias_dir.exists():
             mlflow.log_artifacts(str(bias_dir), "bias")
@@ -133,6 +154,8 @@ def register(params: Dict[str, Any], checkpoint: Path, evaluation_dir: Path,
             "test_recall_target_met": str(candidate["checks"]["urgent_recall"]["passed"]).lower(),
             "test_calibration_ok": str(candidate["checks"]["calibration_error"]["passed"]).lower(),
             "bias_result": bias["result"] if bias else "not run",
+            "group_thresholds": (", ".join(bias["deployed_thresholds"]["group_taus"])
+                                 if bias and bias.get("deployed_thresholds") else "none"),
             "promotion": "promoted" if decision["promote"] else "rejected: " + "; ".join(decision["reasons"]),
             "warnings": "; ".join(decision["warnings"]) or "none"}
     for key, value in tags.items():
