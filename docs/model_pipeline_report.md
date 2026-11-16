@@ -350,8 +350,12 @@ The registry code is `src/training/registry.py` plus `src/serving/triage_model.p
 
 **Rollback.**
 - The previous Production version keeps the alias `previous`, and `registry rollback` swaps back.
-- In GCS, `registry rollback-gcs` points `latest.json` at an earlier version. The image is rolled back by
-  re-tagging it.
+- In GCS, `registry rollback-gcs --image <serving image>` points `latest.json` at an earlier version and moves the
+  serving image's `latest` tag to the same version.
+- Automatic: CD runs `registry compare-deployed` before pushing; a model worse than the deployed one on validation
+  is not pushed, so the deployed version stays.
+- Tested live on 2026-11-16: v3 → v2 → v3, both GCS `latest.json` and the image tag
+  ([evidence](model_pipeline_evidence.md#rollback-tested-live)).
 
 **Current state.**
 - Local MLflow registry (development): v3 = fusion_oof_rw = Production (validation AUC 0.769 vs v2's 0.774, inside
@@ -366,7 +370,9 @@ The registry code is `src/training/registry.py` plus `src/serving/triage_model.p
   `model_info.json`, then writes `latest.json` (the deployed version) and `version.txt` (the highest number pushed,
   as in course Github_Labs/Lab4).
 - GCS numbering is its own, so CI runners with a fresh MLflow registry never collide.
-- CI pushes the serving image to Artifact Registry with the same number.
+- CD pushes the same model as a versioned package to Artifact Registry (generic repository `skinsort-models`,
+  package `skinsort-triage`, version `v<N>`), and the serving image (`skinsort/skinsort-serving:v<N>`) with the
+  same number.
 - **Status:** done by CD. v1 (2026-11-15, one threshold, bias FAIL alert), v2 and v3 (per-group thresholds, bias
   PASS) are in GCS, with `skinsort-serving:v1`–`v3` and `latest` in Artifact Registry.
 
@@ -380,14 +386,14 @@ Two workflows, modelled on the course `ci_cd_pipeline.yml`: `.github/workflows/m
 | Training on push to main (or a new `Data-Pipeline/dvc.lock`) | 7.1 | GCP auth → `dvc pull` → backbone from GCS → `python -m src.training.pipeline` (reweighted fusion head + out-of-fold tau). Backbones need a GPU and are trained on the GCP VM |
 | Automated validation | 7.2 | registry gate in the pipeline (validation AUC floor, calibration, no regression) |
 | Automated bias detection | 7.3 | `bias.py` + mitigation in the pipeline; a failing slice sends a Slack alert |
-| Registry push | 7.4 | `registry push` (GCS, versioned) + serving image to Artifact Registry |
+| Registry push | 7.4 | `registry push` (GCS, versioned) + model package (`skinsort-models`) and serving image to Artifact Registry |
 | Notifications | 7.5 | `src/notify.py`: Slack (`SLACK_WEBHOOK_URL`, same channel and delivery check as the data pipeline alerts) with an optional email copy (smtplib, like the course Airflow lab): failure, success, bias alert |
-| Rollback | 7.6 | `registry compare-deployed`: a model worse than the deployed one on validation is not pushed, so the deployed version stays; `rollback-gcs` for a manual rollback |
+| Rollback | 7.6 | `registry compare-deployed`: a model worse than the deployed one on validation is not pushed, so the deployed version stays; `rollback-gcs --image` for a manual rollback of the model and the image (tested live) |
 
 GCP login is keyless (Workload Identity Federation): GitHub proves which repository is running and Google lets only this repository act as the data pipeline's service account `skinsort-pipeline`, so no JSON key exists to leak. Without the `GCP_WORKLOAD_IDENTITY_PROVIDER` / `GCP_SERVICE_ACCOUNT` secrets, the CD pipeline job is skipped with a notice instead of failing; pull requests only show the CI test runs. Reports, `mlflow.db`
 and `mlruns/` are kept as run artifacts.
 
-**Status: live.** CI (lint + 75 tests) passes on `main`. Three CD runs on `main` passed end to end (links and outputs
+**Status: live.** CI (lint + 76 tests) passes on `main`. Three CD runs on `main` passed end to end (links and outputs
 in [model_pipeline_evidence.md](model_pipeline_evidence.md)):
 
 | Run | Trigger | Bias check | Deployed | Slack |
@@ -427,14 +433,18 @@ What has been checked locally:
 ## 10. Docker (PDF §8.1)
 
 `docker/Dockerfile` is multi-stage, following course Docker_Labs/Lab2:
-- `trainer` runs `src.training.pipeline`.
+- `trainer` runs every training step: `docker run skinsort-trainer` runs `src.training.pipeline`, and
+  `docker run skinsort-trainer src.training.train` trains the image backbones. Built with
+  `--build-arg TORCH_INDEX=<CUDA wheel index>` it trains on a GPU (`docker compose --profile gpu run backbones`);
+  the default build is CPU-only. A smoke training run inside the container was checked on 2026-11-16.
 - `serving_base` runs the FastAPI app `src/serving/app.py` (`GET /health`; `POST /triage` with a photo and
   optional answers) on a mounted model.
 - `serving` adds the exported Production model, which makes it the image for Artifact Registry.
 
 `docker/docker-compose.yml` starts `serving_base` after the trainer finishes and mounts the model the trainer
 exported. The repository is mounted at the same absolute path, because `mlflow.db` stores absolute artifact paths.
-Both images build locally.
+`shm_size: 2gb` gives the PyTorch data loader workers enough shared memory. The serving image is also built and
+pushed by every CD run.
 
 ## 11. How to run
 

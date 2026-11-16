@@ -222,14 +222,18 @@ python -m src.training.pipeline     # model pipeline (needs outputs/models/<back
 
 ```bash
 docker compose -f docker/docker-compose.yml up --build   # model trainer, then the triage API on :8080
+docker run --rm --shm-size=2g -v "$PWD:$PWD" -w "$PWD" skinsort-trainer src.training.train   # image backbones in the same container
 ```
+
+On a GPU machine, build the trainer with CUDA PyTorch and run the backbone training there:
+`TORCH_INDEX=https://download.pytorch.org/whl/<cuda version> docker compose -f docker/docker-compose.yml --profile gpu run backbones`.
 
 The root `docker-compose.yml` (web app, inference service, monitoring) and root `dvc.yaml` are placeholders for later phases.
 
 ### Tests
 
 ```bash
-pytest tests/                       # model pipeline (75 tests, synthetic data)
+pytest tests/                       # model pipeline (76 tests, synthetic data)
 flake8 src tests
 (cd Data-Pipeline && pytest)        # data pipeline
 ```
@@ -256,9 +260,9 @@ flowchart TD
 
 1. Every push / PR touching model code: unit tests (`pytest tests/`).
 2. After CI passes on `main` (or a manual run; skipped if GCP secrets are not set), `model-pipeline-cd.yml` logs in to GCP without a key (Workload Identity Federation, as the data pipeline's service account `skinsort-pipeline`, only for this repository), then: pull the DVC data and the GPU-trained backbone from GCS, then `python -m src.training.pipeline`: out-of-fold training of the phone model → bias check on the model as deployed (per-group thresholds) → model selection → registry gate on validation metrics (AUC ≥ 0.75, calibration ≤ 0.05).
-3. Compare with the deployed model (`gs://.../skinsort-triage/latest.json`, validation AUC may not drop more than 0.01); if the new one is worse nothing is pushed, so the deployed version stays. Manual rollback: `python -m src.training.registry rollback-gcs`.
+3. Compare with the deployed model (`gs://.../skinsort-triage/latest.json`, validation AUC may not drop more than 0.01); if the new one is worse nothing is pushed, so the deployed version stays.
 4. A bias gap above `bias.max_recall_gap` sends an alert to Slack (`#pipeline-alerts`, the same channel as the data pipeline alerts, posted by the "SkinSort Model Pipeline" Slack app).
-5. Push the model to GCS (versioned) and the serving image to Artifact Registry; Slack message on success or failure (optional email copy).
+5. Push the model to GCS (versioned), the same model as a versioned package to Artifact Registry (`skinsort-models`), and the serving image to Artifact Registry; Slack message on success or failure (optional email copy). Manual rollback of the model and the image: `python -m src.training.registry rollback-gcs --image us-central1-docker.pkg.dev/skinsort-512623/skinsort/skinsort-serving` (tested live).
 
 Live since 2026-11-15: three green CD runs on `main` deployed v1–v3 ([evidence](docs/model_pipeline_evidence.md)). Image backbones need a GPU and are trained on the GCP VM, not in GitHub Actions; the CD downloads them from `gs://skinsort-data-asdr/models/backbones/`. With branch protection on `main` (merges only through a reviewed pull request), no model reaches production without human sign-off.
 
