@@ -172,3 +172,13 @@ def test_compare_deployed_blocks_worse_model(params, tmp_path):
     push_to_gcs(params, client=client, record=tmp_path / "gcs_push.json")
     d = compare_deployed(params, ev_new, client=client)
     assert not d["promote"] and d["deployed_version"] == 1
+
+
+def test_retag_image_moves_latest_to_the_version():
+    from src.training.registry import retag_image
+    calls = []
+    cmd = retag_image("us-central1-docker.pkg.dev/p/skinsort/skinsort-serving", 2,
+                      run=lambda c, check: calls.append((c, check)))
+    assert calls == [(cmd, True)]
+    assert cmd[-3:] == ["us-central1-docker.pkg.dev/p/skinsort/skinsort-serving:v2",
+                        "us-central1-docker.pkg.dev/p/skinsort/skinsort-serving:latest", "--quiet"]

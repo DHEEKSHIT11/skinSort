@@ -310,6 +310,14 @@ def rollback_gcs(params: Dict[str, Any], to: Optional[int] = None, client=None) 
     return {"deployed": target, "rolled_back_from": current["gcs_version"]}
 
 
+def retag_image(image: str, version: int, run=None) -> List[str]:
+    """Point the serving image's `latest` tag at v<version> in Artifact Registry (image rollback)."""
+    import subprocess
+    cmd = ["gcloud", "artifacts", "docker", "tags", "add", f"{image}:v{version}", f"{image}:latest", "--quiet"]
+    (run or subprocess.run)(cmd, check=True)
+    return cmd
+
+
 def export(params: Dict[str, Any], out: Path) -> Dict[str, Any]:
     """Copy the Production model to a local folder for the serving image (no network)."""
     import shutil
@@ -354,6 +362,8 @@ def main() -> None:
     sub.add_parser("rollback", help="move Production back to the previous version")
     rbg = sub.add_parser("rollback-gcs", help="point GCS latest.json back at an earlier version")
     rbg.add_argument("--to", type=int, help="version number (default: the one before the deployed)")
+    rbg.add_argument("--image", help="also move the serving image's latest tag, e.g. "
+                                     "us-central1-docker.pkg.dev/<project>/skinsort/skinsort-serving")
     cmp = sub.add_parser("compare-deployed", help="gate a new model against the GCS latest.json (CI)")
     cmp.add_argument("--evaluation", type=Path, required=True, help="outputs/evaluation/<name>")
     exp = sub.add_parser("export", help="copy the Production model to a local folder (for Docker serving)")
@@ -391,6 +401,9 @@ def main() -> None:
     elif args.command == "rollback-gcs":
         r = rollback_gcs(params, args.to)
         print(f"GCS latest.json -> v{r['deployed']} (was v{r['rolled_back_from']})")
+        if args.image:
+            retag_image(args.image, r["deployed"])
+            print(f"{args.image}:latest -> v{r['deployed']}")
     elif args.command == "compare-deployed":
         d = compare_deployed(params, args.evaluation.resolve())
         verdict = "OK to deploy" if d["promote"] else "REJECTED: " + "; ".join(d["reasons"])

@@ -10,7 +10,8 @@
 #      worse, nothing is pushed and the deployed version stays. Manual rollback of a bad
 #      deployment: `python -m src.training.registry rollback-gcs` + re-tag the image.
 #   4. bias: a bias gap above the limit sends an alert (assignment: "alert or block")
-#   5. push the model to GCS (versioned, version.txt) and the serving image to Artifact Registry
+#   5. push the model to GCS (versioned, version.txt), the same model as a versioned package to
+#      Artifact Registry (generic repo skinsort-models) and the serving image to Artifact Registry
 #   6. Slack message on success and on failure (src/notify.py: same channels and rules as the data
 #      pipeline alerts, #pipeline-alerts; optional email copy with smtplib like the course Airflow lab)
 # Without the GCP_WORKLOAD_IDENTITY_PROVIDER secret the pipeline job is skipped with a notice.
@@ -24,8 +25,8 @@
 # the data pipeline's service account), GCP_PROJECT_ID, SLACK_WEBHOOK_URL (the data pipeline's webhook);
 # optional email copy: ALERT_EMAIL_TO, SMTP_HOST, SMTP_USER, SMTP_PASSWORD. No service-account key is used:
 # GitHub proves which repository is running and Google lets only this repository act as the service account.
-# One-time setup: the Workload Identity pool/provider (docs/model_pipeline_report.md), Artifact Registry repo `skinsort` in
-# GCP_REGION, and the backbone at gs://skinsort-data-asdr/models/backbones/efficientnet_b3/best.pt.
+# One-time setup: the Workload Identity pool/provider (docs/model_pipeline_report.md), Artifact Registry repos `skinsort`
+# (docker) and `skinsort-models` (generic) in GCP_REGION, and the backbone at gs://skinsort-data-asdr/models/backbones/efficientnet_b3/best.pt.
 # Note: GitHub starts workflow_run workflows only from the default branch, so this runs once
 # the file is on main.
 name: model-pipeline-cd
@@ -40,6 +41,7 @@ on:
 env:
   GCP_REGION: us-central1
   REPOSITORY: skinsort
+  MODEL_REPOSITORY: skinsort-models
   BACKBONE_URI: gs://skinsort-data-asdr/models/backbones/efficientnet_b3/best.pt
   MLFLOW_DISABLE_AGENT_HINT: "1"
   RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -124,6 +126,14 @@ jobs:
 
       - name: Push the model to GCS (versioned)
         run: python -m src.training.registry push
+
+      - name: Push the model to Artifact Registry (versioned package)
+        run: |
+          VERSION=$(python -c "import json; print(json.load(open('outputs/gcs_push.json'))['gcs_version'])")
+          tar -czf "skinsort-triage-v${VERSION}.tar.gz" -C models/triage_model .
+          gcloud artifacts generic upload --project="${{ secrets.GCP_PROJECT_ID }}" --location="${GCP_REGION}" \
+            --repository="${MODEL_REPOSITORY}" --package=skinsort-triage --version="v${VERSION}" \
+            --source="skinsort-triage-v${VERSION}.tar.gz"
 
       - name: Build and push the serving image to Artifact Registry
         run: |

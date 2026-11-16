@@ -21,6 +21,7 @@ Every run executed the same steps, all green:
 | Gate against the deployed model | `registry compare-deployed`: not pushed if worse than `latest.json` in GCS (rollback = keep the deployed version) | §7.6 |
 | Bias alert | Slack alert when the selected model fails a slice | §7.3 |
 | Push the model to GCS (versioned) | `registry push` → `v<N>/`, `latest.json`, `version.txt` | §2.6, §7.4 |
+| Push the model to Artifact Registry (versioned package) | generic repository `skinsort-models`, package `skinsort-triage`, version `v<N>` (added after run 3; v3 uploaded by hand) | §2.6, §7.4, §8.7 |
 | Build and push the serving image to Artifact Registry | `us-central1-docker.pkg.dev/skinsort-512623/skinsort/skinsort-serving:v<N>` | §7.4, §8.1 |
 | Keep reports | selection, bias, evaluation reports, `mlflow.db`, `mlruns/` as run artifacts | §4 |
 | Notify | Slack `#pipeline-alerts` on success or failure (`src/notify.py`) | §7.5 |
@@ -58,6 +59,14 @@ Serving image in Artifact Registry (`us-central1-docker.pkg.dev/skinsort-512623/
 | skinsort-serving | `v2` | 2026-11-16 00:31 |
 | skinsort-serving | `v1` | 2026-11-15 23:26 |
 
+Model packages in Artifact Registry (`us-central1-generic.pkg.dev/skinsort-512623/skinsort-models`):
+
+| Package | Version | Content |
+|---|---|---|
+| skinsort-triage | `v3` | the deployed MLflow pyfunc model (same files as GCS `v3/`), 41 MB |
+
+From the next CD run on, every deployed version is uploaded here by the workflow.
+
 Other artifacts:
 - `gs://skinsort-data-asdr/models/backbones/{efficientnet_b3,resnet50,convnext_tiny}/best.pt`: the GPU-trained image
   networks (checksums match the training outputs).
@@ -68,5 +77,32 @@ Model files are not in git (`.gitignore`: `outputs/`, `*.pt`, `mlruns/`, `mlflow
 
 ## CI (`.github/workflows/model-pipeline-ci.yml`)
 
-Lint (flake8) and 75 unit tests on every push and pull request that touches the model code; green on PR #4, PR #7
+Lint (flake8) and 76 unit tests on every push and pull request that touches the model code; green on PR #4, PR #7
 and `main`. CD starts only after CI passes on `main`.
+
+## Rollback, tested live
+
+`python -m src.training.registry rollback-gcs --image us-central1-docker.pkg.dev/skinsort-512623/skinsort/skinsort-serving`
+moves both the deployed model (GCS `latest.json`) and the serving image's `latest` tag. Run on 2026-11-16 01:14 UTC:
+
+```
+before:                 GCS latest.json -> v3    image tags: latest,v3  v2  v1
+rollback (one back):    GCS latest.json -> v2 (rolled_back_from 3)    image tags: v3  latest,v2  v1
+restore (--to 3):       GCS latest.json -> v3 (rolled_back_from 2)    image tags: latest,v3  v2  v1
+```
+
+The automatic part runs in every CD run: `registry compare-deployed` refuses to push a model whose validation AUC is
+more than 0.01 below the deployed one (unit-tested in `tests/test_registry.py`).
+
+## Docker: the whole training process runs in the trainer image
+
+```
+docker build -f docker/Dockerfile --target trainer -t skinsort-trainer .
+docker run --rm --shm-size=2g -v "$PWD:$PWD" -w "$PWD" skinsort-trainer src.training.train --smoke --no-pretrained --backbone resnet18
+  -> device cpu, 200 train images, 200 val images
+     [resnet18] epoch 1/1  loss 1.033  val urgent AUC 0.505 ...   (smoke check, 2026-11-16)
+docker run ... skinsort-trainer                     # default: src.training.pipeline (fusion -> bias -> registry)
+```
+
+For the full backbone training the same image is built with CUDA PyTorch (`--build-arg TORCH_INDEX=...`) and run on
+the GPU machine (`docker compose --profile gpu run backbones`).

@@ -16,10 +16,35 @@ services:
       dockerfile: docker/Dockerfile
       target: trainer
     image: skinsort-trainer
+    shm_size: "2gb"                  # PyTorch DataLoader workers share batches through /dev/shm
     working_dir: ${PWD}
     volumes:
       - ${PWD}:${PWD}
-    command: ["--fail-if-rejected"]
+    command: ["src.training.pipeline", "--fail-if-rejected"]
+
+  # Image backbones on a GPU machine (NVIDIA Container Toolkit), same trainer image built with CUDA PyTorch:
+  #   TORCH_INDEX=https://download.pytorch.org/whl/<cuda version> docker compose -f docker/docker-compose.yml --profile gpu run backbones
+  backbones:
+    profiles: ["gpu"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: trainer
+      args:
+        TORCH_INDEX: ${TORCH_INDEX:-https://download.pytorch.org/whl/cpu}
+    image: skinsort-trainer-gpu
+    shm_size: "2gb"
+    working_dir: ${PWD}
+    volumes:
+      - ${PWD}:${PWD}
+    command: ["src.training.train"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
   serving:
     build:
