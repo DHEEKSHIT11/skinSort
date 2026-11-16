@@ -32,7 +32,8 @@ STEPS = ["fit_final", "bias", "select_model", "registry", "export", "figures"]
 
 
 def commands(params: Dict, backbone: str, name: str, trained_on: List[str], fail_if_rejected: bool,
-             reweight: List[str] = (), mitigate: List[str] = ()) -> Dict[str, List[str]]:
+             reweight: List[str] = (), mitigate: List[str] = (),
+             deploy: List[str] = ()) -> Dict[str, List[str]]:
     py = [sys.executable, "-m"]
     register = py + ["src.training.registry", "register",
                      "--from-selection", str(ROOT / "outputs" / "selection" / "model_selection.json")]
@@ -44,7 +45,7 @@ def commands(params: Dict, backbone: str, name: str, trained_on: List[str], fail
     bias = py + ["src.training.bias", "--name", name, "--include-val"]
     return {
         "fit_final": fit + (["--reweight", *reweight] if reweight else []),
-        "bias": bias + (["--mitigate", *mitigate] if mitigate else []),
+        "bias": bias + (["--mitigate", *mitigate] if mitigate else []) + (["--deploy", *deploy] if deploy else []),
         "select_model": py + ["src.training.select_model", "--no-speed"],
         "registry": register,
         "export": py + ["src.training.registry", "export"],
@@ -65,7 +66,8 @@ def main() -> None:
     params = load_params()
     cfg = params["pipeline"]
     cmds = commands(params, args.backbone or cfg["backbone"], args.name or cfg["model_name"], args.trained_on,
-                    args.fail_if_rejected, cfg.get("reweight", []), cfg.get("mitigate", []))
+                    args.fail_if_rejected, cfg.get("reweight", []), cfg.get("mitigate", []),
+                    cfg.get("deploy_thresholds", []))
     summary = {"started": time.strftime("%Y-%m-%d %H:%M:%S"), "steps": [], "status": "success"}
     out = ROOT / "outputs" / "pipeline_summary.json"
     out.parent.mkdir(parents=True, exist_ok=True)

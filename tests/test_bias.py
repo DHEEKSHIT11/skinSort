@@ -7,8 +7,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.training.bias import (add_slice_columns, apply_thresholds, fit_group_thresholds,
-                               mitigate, patient_half, run_bias_check, slice_report,
+from src.training.bias import (add_slice_columns, apply_thresholds, deployed_predictions,
+                               fit_group_thresholds, mitigate, patient_half, run_bias_check, slice_report,
                                wilson_interval)
 from src.training.dataset import load_params
 
@@ -125,3 +125,15 @@ def test_mitigate_cross_fits_out_of_fold_rows():
     assert r["split"] == "val" and "cross-fitted" in r["fitted_on"] and len(r["group_taus_per_fold"]) == 2
     assert r["before"]["status"] == "FAIL" and r["after"]["recall_gap"] < r["before"]["recall_gap"]
     assert r["group_taus"]["male"] < 0.5
+
+
+def test_deployed_predictions_lower_only_needed_groups_and_never_see_their_rows():
+    preds = add_slice_columns(pd.concat([fake_predictions(n_per_group=80, split="val"), fake_predictions()]))
+    out, shipped = deployed_predictions(preds, ["sex"], target=0.9, global_tau=0.5, min_urgent=20)
+    assert shipped["sex"]["male"] < 0.5 and shipped["sex"]["female"] == 0.5   # fitted on all val rows
+    assert (out["tau_used"] <= 0.5).all()
+    male_test = out[(out["eval_split"] == "test") & (out["sex"] == "male")]
+    assert (male_test["tau_used"] == shipped["sex"]["male"]).all()           # test: val-fitted thresholds
+    val = out[out["eval_split"] == "val"]
+    before = slice_report(add_slice_columns(fake_predictions(n_per_group=80, split="val")), "sex", 20, 0.05)
+    assert slice_report(val, "sex", 20, 0.05)["recall_gap"] < before["recall_gap"]

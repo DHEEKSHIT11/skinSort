@@ -7,7 +7,10 @@ load the Production version with
     mlflow.pyfunc.load_model("models:/skinsort-triage@production")
 
 Input DataFrame columns: image_path, q_itch, q_grew, q_hurt, q_changed, q_bleed,
-q_elevation (1 = yes, 0 = no, empty = not answered).
+q_elevation (1 = yes, 0 = no, empty = not answered), and optional sex (female / male) and age.
+When the model ships per-group thresholds (bias mitigation, artifact group_thresholds), a person
+whose sex / age group is given gets that group's urgent threshold (the lowest that applies, never
+above the global tau); without them the global tau is used.
 """
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -42,6 +45,11 @@ class TriageModel(mlflow.pyfunc.PythonModel):
         self.temperature = float(ckpt.get("temperature", 1.0))
         self.offset = np.asarray(ckpt.get("class_offset", np.zeros(len(self.classes))), dtype=np.float64)
         self.tau = float(ckpt["tau"])
+        self.group_taus: Dict[str, Dict[str, float]] = {}
+        if "group_thresholds" in context.artifacts:
+            import json
+            with open(context.artifacts["group_thresholds"]) as f:
+                self.group_taus = json.load(f)["group_taus"]
         self.answers = self.params["data"]["answer_columns"]
         self.answer_columns = answer_feature_columns(self.params)
         self.transform = build_transforms(self.params, train=False)
@@ -53,6 +61,25 @@ class TriageModel(mlflow.pyfunc.PythonModel):
                             for c in self.answers})
         feats = pd.concat([raw.fillna(0), raw.isna().astype(float).add_suffix("_missing")], axis=1)
         return torch.tensor(feats[self.answer_columns].to_numpy(dtype=np.float32))
+
+    def thresholds(self, df: pd.DataFrame) -> np.ndarray:
+        """Urgent threshold per row: the global tau, lowered for the groups the model has a
+        threshold for (same rule as bias.deployed_predictions)."""
+        from src.training.bias import add_slice_columns
+        tau = np.full(len(df), self.tau)
+        if not self.group_taus:
+            return tau
+        info = pd.DataFrame({"sex": df.get("sex", pd.Series(None, index=df.index)),
+                             "age": pd.to_numeric(df.get("age", pd.Series(np.nan, index=df.index)),
+                                                  errors="coerce"),
+                             "fitzpatrick": np.nan, "body_site": None, "source": None}, index=df.index)
+        info["sex"] = info["sex"].astype(object).where(info["sex"].notna(), None)
+        info["sex"] = info["sex"].map(lambda v: str(v).strip().lower() if v is not None else None)
+        groups = add_slice_columns(info)
+        for col, taus in self.group_taus.items():
+            if col in groups:
+                tau = np.minimum(tau, groups[col].map(taus).fillna(self.tau).to_numpy(dtype=np.float64))
+        return tau
 
     def predict(self, context, model_input: pd.DataFrame, params: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
         images = []
@@ -68,7 +95,9 @@ class TriageModel(mlflow.pyfunc.PythonModel):
         probs = np.exp(z) / np.exp(z).sum(axis=1, keepdims=True)
         urgent_idx = self.classes.index("urgent")
         out = pd.DataFrame(probs, columns=[f"p_{c}" for c in self.classes])
-        out["urgent"] = probs[:, urgent_idx] >= self.tau
+        tau = self.thresholds(model_input)
+        out["urgent"] = probs[:, urgent_idx] >= tau
+        out["tau"] = tau
         others = probs.copy()
         others[:, urgent_idx] = -1
         out["triage"] = np.where(out["urgent"], "urgent", np.array(self.classes)[others.argmax(axis=1)])

@@ -95,7 +95,8 @@ def test_registered_model_predicts(params, tmp_path):
     register(params, ckpt, ev, image_example=example(tmp_path))
     model = mlflow.pyfunc.load_model(f"models:/{params['mlflow']['registered_model_name']}@production")
     out = model.predict(example(tmp_path))
-    assert list(out.columns) == ["p_routine", "p_priority", "p_urgent", "urgent", "triage"]
+    assert list(out.columns) == ["p_routine", "p_priority", "p_urgent", "urgent", "tau", "triage"]
+    assert (out["tau"] == 0.3).all()                 # no group thresholds shipped -> global tau
     assert np.allclose(out[["p_routine", "p_priority", "p_urgent"]].sum(axis=1), 1.0)
     assert ((out["p_urgent"] >= 0.3) == out["urgent"]).all()
 

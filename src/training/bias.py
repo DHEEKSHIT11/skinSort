@@ -202,6 +202,14 @@ def to_markdown(summary: Dict[str, Any]) -> str:
              f"{summary['min_urgent_cases']} urgent images are listed but not used for the gap.", "",
              f"**Result: {summary['result']}**"
              + (f" (failed: {', '.join(summary['failed_slices'])})" if summary["failed_slices"] else ""), ""]
+    deployed = summary.get("deployed_thresholds")
+    if deployed:
+        taus = "; ".join(f"{col}: " + (", ".join(f"{g} {t:.3f}" for g, t in groups.items()) or "none")
+                         for col, groups in deployed["group_taus"].items())
+        lines += [f"Checked as deployed: global threshold {deployed['global_tau']:.3f}, per-group thresholds "
+                  f"({taus}). Validation rows are scored by thresholds fitted on the other patient half, "
+                  f"test rows by thresholds fitted on validation. With one global threshold the result was "
+                  f"**{summary.get('global_threshold_result')}** (see global_threshold/bias_report.md).", ""]
     for split, reps in summary["splits"].items():
         lines += [f"## {split}", ""]
         for r in reps:
@@ -308,6 +316,36 @@ def mitigate(predictions: pd.DataFrame, slice_col: str, target: float, global_ta
     return out
 
 
+def deployed_predictions(predictions: pd.DataFrame, slices: List[str], target: float, global_tau: float,
+                         min_urgent: int) -> Tuple[pd.DataFrame, Dict[str, Dict[str, float]]]:
+    """Predictions of the model as it is deployed: per-group thresholds for `slices` (the
+    groups the intake form asks for), the global tau for everyone else. A row with groups in
+    several deployed slices gets the lowest of its thresholds (never above the global one).
+
+    Every row is scored by thresholds that never saw it: val rows (out-of-fold) by
+    thresholds fitted on the other patient half, test rows by thresholds fitted on val.
+    Returns those predictions and the thresholds fitted on all val rows (what the model ships).
+    """
+    df = predictions.copy()
+    tau = np.full(len(df), global_tau)
+    val_mask = (df["eval_split"] == "val").to_numpy()
+    half = patient_half(df).to_numpy()
+    shipped: Dict[str, Dict[str, float]] = {}
+    for col in slices:
+        val = df[val_mask]
+        shipped[col] = fit_group_thresholds(val, col, target, min_urgent, global_tau)
+        for h in (0, 1):
+            fitted = fit_group_thresholds(df[val_mask & (half != h)], col, target, min_urgent, global_tau)
+            rows = val_mask & (half == h)
+            tau[rows] = np.minimum(tau[rows], df.loc[rows, col].map(fitted).fillna(global_tau).to_numpy())
+        rows = ~val_mask
+        tau[rows] = np.minimum(tau[rows], df.loc[rows, col].map(shipped[col]).fillna(global_tau).to_numpy())
+    others = np.where(df["p_priority"] > df["p_routine"], 1, 0)
+    df["pred"] = np.where(df["p_urgent"] >= tau, URGENT, others)
+    df["tau_used"] = tau
+    return df, shipped
+
+
 def mitigation_markdown(results: List[Dict[str, Any]]) -> str:
     fmt = lambda v: "n/a" if v is None or (isinstance(v, float) and math.isnan(v)) else f"{v:.3f}"
     lines = ["# Mitigation: per-group thresholds", "",
@@ -347,12 +385,39 @@ def main() -> None:
                         help="also slice the val rows (use for out-of-fold predictions from fit_final.py)")
     parser.add_argument("--mitigate", nargs="*", default=[],
                         help="slices to try per-group thresholds on (needs val rows in predictions.csv)")
+    parser.add_argument("--deploy", nargs="*", default=[],
+                        help="slices whose per-group thresholds the model ships (the intake form asks "
+                             "for them); the bias check is then run on those predictions")
     args = parser.parse_args()
 
     params = load_params()
     setup_mlflow(params)
-    predictions = pd.read_csv(EVAL_DIR / args.name / "predictions.csv")
+    predictions = original = pd.read_csv(EVAL_DIR / args.name / "predictions.csv")
+    out_dir = OUT_DIR / args.name
+    if args.deploy:
+        # the global-threshold check is kept for comparison; the main report is the deployed model
+        before = run_bias_check(params, predictions, args.name, out_dir / "global_threshold",
+                                include_val=args.include_val)
+        print(f"bias check with one global threshold: {before['result']} {before['failed_slices'] or ''}")
+        cfg = params["bias"]
+        metrics = json.loads((EVAL_DIR / args.name / "metrics.json").read_text())
+        deployed, shipped = deployed_predictions(add_slice_columns(predictions), args.deploy,
+                                                 cfg.get("group_recall_target", metrics["recall_target"]),
+                                                 metrics["tau"], cfg["min_urgent_cases"])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "deployed_thresholds.json").write_text(json.dumps(
+            {"global_tau": metrics["tau"], "group_taus": shipped,
+             "group_recall_target": cfg.get("group_recall_target", metrics["recall_target"]),
+             "fitted_on": "all validation rows (out-of-fold); checked by patient-half cross-fitting"}, indent=2))
+        deployed.to_csv(out_dir / "predictions_deployed.csv", index=False)
+        print("deployed per-group thresholds:", json.dumps(shipped))
+        predictions = deployed
     summary = run_bias_check(params, predictions, args.name, include_val=args.include_val)
+    if args.deploy:
+        summary["deployed_thresholds"] = json.loads((out_dir / "deployed_thresholds.json").read_text())
+        summary["global_threshold_result"] = before["result"]
+        (out_dir / "bias_report.json").write_text(json.dumps(summary, indent=2))
+        (out_dir / "bias_report.md").write_text(to_markdown(summary))
     for split, reps in summary["splits"].items():
         for r in reps:
             gap = "n/a  " if math.isnan(r["recall_gap"]) else f"{r['recall_gap']:.3f}"
@@ -363,7 +428,7 @@ def main() -> None:
     if args.mitigate:
         cfg = params["bias"]
         metrics = json.loads((EVAL_DIR / args.name / "metrics.json").read_text())
-        prepared = add_slice_columns(predictions)
+        prepared = add_slice_columns(original)        # before = one global threshold
         results = [r for col in args.mitigate
                    for r in mitigate(prepared, col, metrics["recall_target"], metrics["tau"],
                                      cfg["min_urgent_cases"], cfg["max_recall_gap"],

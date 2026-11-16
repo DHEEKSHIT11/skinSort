@@ -59,6 +59,10 @@ bias:
   slices: [sex, age_group, body_site, skin_tone, source]
   min_urgent_cases: 20
   max_recall_gap: 0.05
+  # per-group thresholds the model ships (bias.py --deploy): each group of these slices gets its own
+  # urgent threshold so it reaches group_recall_target (never above the global tau). The intake form
+  # asks for them (optional); people who skip them keep the global threshold.
+  group_recall_target: 0.90
 
 tuning:                          # Hyperopt TPE on the fusion head (src/training/tune.py)
   n_trials: 20
@@ -76,6 +80,7 @@ pipeline:                          # src/training/pipeline.py builds this phone 
   backbone: efficientnet_b3
   reweight: [sex, body_site]       # Kamiran & Calders reweighing (same formula as the data pipeline)
   mitigate: [sex, body_site, skin_tone]
+  deploy_thresholds: [sex, age_group]   # shipped in the model; see bias.group_recall_target
 
 selection:                         # src/training/select_model.py (validation data only)
   # folders in outputs/evaluation; fusion_pad* are earlier local versions (skipped where absent, e.g. CI)

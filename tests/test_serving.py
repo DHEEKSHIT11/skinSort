@@ -34,3 +34,24 @@ def test_triage_endpoint(params, tmp_path, monkeypatch):  # noqa: F811
     assert client.post("/triage", files={"photo": ("a.jpg", b"nope", "image/jpeg")}).status_code == 400
     assert client.post("/triage", files={"photo": ("a.jpg", photo_bytes(), "image/jpeg")},
                        data={"q_itch": "maybe"}).status_code == 422
+
+
+def test_triage_uses_group_thresholds(params, tmp_path, monkeypatch):  # noqa: F811
+    import json
+    ckpt, ev = make_model(params, tmp_path, "v1", auc=0.80)
+    bias_dir = tmp_path / "bias"
+    bias_dir.mkdir()
+    (bias_dir / "deployed_thresholds.json").write_text(json.dumps(
+        {"global_tau": 0.3, "group_taus": {"sex": {"female": 0.2}, "age_group": {"75+": 0.1}}}))
+    register(params, ckpt, ev, bias_dir=bias_dir, image_example=example(tmp_path))
+    export(params, tmp_path / "exported")
+    monkeypatch.setenv("MODEL_DIR", str(tmp_path / "exported"))
+    serving._state.clear()
+    client = TestClient(serving.app)
+    photo = {"photo": ("a.jpg", photo_bytes(), "image/jpeg")}
+    assert client.post("/triage", files=photo).json()["urgent_threshold"] == 0.3
+    assert client.post("/triage", files=photo, data={"sex": "F"}).json()["urgent_threshold"] == 0.2
+    assert client.post("/triage", files=photo, data={"sex": "male"}).json()["urgent_threshold"] == 0.3
+    assert client.post("/triage", files=photo, data={"sex": "female", "age": "80"}).json()["urgent_threshold"] == 0.1
+    assert client.post("/triage", files=photo, data={"sex": "other"}).status_code == 422
+    assert client.post("/triage", files=photo, data={"age": "abc"}).status_code == 422

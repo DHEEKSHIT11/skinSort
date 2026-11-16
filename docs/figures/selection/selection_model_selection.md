@@ -20,11 +20,11 @@ Filters: validation calibration error ≤ 0.05; tau fitted on ≥ 100 urgent pho
 |---|---|---|---|---|---|---|---|---|
 | fusion_pad_tuned | fusion | 0.869 | 0.020 | pad_val (31) | INCONCLUSIVE (0) | no | 0.730 | 0.543 |
 | fusion_oof | fusion | 0.813 | 0.032 | out-of-fold pad_train + pad_val (209) | FAIL (3) | yes | 0.707 | 0.743 |
-| fusion_oof_rw ✅ | fusion | 0.807 | 0.031 | out-of-fold pad_train + pad_val (209) | FAIL (1) | yes | 0.694 | 0.743 |
+| fusion_oof_rw ✅ | fusion | 0.807 | 0.031 | out-of-fold pad_train + pad_val (209) | PASS (0) | yes | 0.694 | 0.743 |
 | fusion_pad | fusion | 0.806 | 0.015 | pad_val (31) | INCONCLUSIVE (0) | no | 0.717 | 0.829 |
 | fusion_oof_tuned | fusion | 0.800 | 0.037 | out-of-fold pad_train + pad_val (209) | FAIL (3) | yes | 0.677 | 0.800 |
 | baseline_answers_lr | baseline | 0.781 | 0.034 | out-of-fold pad_train + pad_val (209) | FAIL (3) | no | 0.577 | 0.486 |
 | baseline_image_only | baseline | 0.663 | 0.018 | out-of-fold pad_train + pad_val (209) | FAIL (1) | no | 0.645 | 0.829 |
 | baseline_prevalence | baseline | 0.500 | 0.018 | out-of-fold pad_train + pad_val (209) | PASS (0) | no | 0.500 | 1.000 |
 
-Selected: **fusion_oof_rw** — fewest failing bias slices (1 vs 3 for fusion_oof) within 0.02 validation AUC of the best.
+Selected: **fusion_oof_rw** — fewest failing bias slices (0 vs 3 for fusion_oof) within 0.02 validation AUC of the best.

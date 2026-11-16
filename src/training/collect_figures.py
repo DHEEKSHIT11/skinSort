@@ -28,7 +28,9 @@ FIGURES: Dict[str, List[Tuple[str, str]]] = {
         ("evaluation/{model}/calibration.png", "Phone model calibration, pad_test"),
     ],
     "bias": [
-        ("bias/{model}/val_sex.png", "Phone model, urgent recall by sex (out-of-fold)"),
+        ("bias/{model}/val_sex.png", "Phone model as deployed (per-group thresholds), urgent recall by sex"),
+        ("bias/{model}/global_threshold/val_sex.png", "Phone model with one global threshold, by sex (before)"),
+        ("bias/{model}/global_threshold/bias_report.md", "Phone model bias report, one global threshold"),
         ("bias/{model}/val_body_site.png", "Phone model, by body site"),
         ("bias/{model}/val_skin_tone.png", "Phone model, by skin tone"),
         ("bias/{model}/val_age_group.png", "Phone model, by age group"),

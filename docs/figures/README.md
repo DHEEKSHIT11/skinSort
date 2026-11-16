@@ -23,7 +23,9 @@ Copied from `outputs/` by `python -m src.training.collect_figures`. Discussed in
 
 | File | What it shows | Source |
 |---|---|---|
-| [bias/bias_fusion_oof_rw_val_sex.png](bias/bias_fusion_oof_rw_val_sex.png) | Phone model, urgent recall by sex (out-of-fold) | `outputs/bias/fusion_oof_rw/val_sex.png` |
+| [bias/bias_fusion_oof_rw_val_sex.png](bias/bias_fusion_oof_rw_val_sex.png) | Phone model as deployed (per-group thresholds), urgent recall by sex | `outputs/bias/fusion_oof_rw/val_sex.png` |
+| [bias/bias_fusion_oof_rw_global_threshold_val_sex.png](bias/bias_fusion_oof_rw_global_threshold_val_sex.png) | Phone model with one global threshold, by sex (before) | `outputs/bias/fusion_oof_rw/global_threshold/val_sex.png` |
+| [bias/bias_fusion_oof_rw_global_threshold_bias_report.md](bias/bias_fusion_oof_rw_global_threshold_bias_report.md) | Phone model bias report, one global threshold | `outputs/bias/fusion_oof_rw/global_threshold/bias_report.md` |
 | [bias/bias_fusion_oof_rw_val_body_site.png](bias/bias_fusion_oof_rw_val_body_site.png) | Phone model, by body site | `outputs/bias/fusion_oof_rw/val_body_site.png` |
 | [bias/bias_fusion_oof_rw_val_skin_tone.png](bias/bias_fusion_oof_rw_val_skin_tone.png) | Phone model, by skin tone | `outputs/bias/fusion_oof_rw/val_skin_tone.png` |
 | [bias/bias_fusion_oof_rw_val_age_group.png](bias/bias_fusion_oof_rw_val_age_group.png) | Phone model, by age group | `outputs/bias/fusion_oof_rw/val_age_group.png` |
