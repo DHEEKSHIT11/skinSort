@@ -146,15 +146,16 @@ Final write-up: [docs/model_pipeline_report.md](docs/model_pipeline_report.md) (
 | Everything after the GPU step | `python -m src.training.pipeline` | fit_final (reweighted) → bias + mitigation → select → registry → export → figures (`docs/figures/`) |
 | Serve | `docker compose -f docker/docker-compose.yml up --build` | `POST localhost:8080/triage` |
 
-Current Production model (`skinsort-triage` v3): `fusion_oof_rw` — efficientnet_b3 image features + the 6 answers, fusion head reweighted by sex × body site (Kamiran & Calders), threshold fitted out-of-fold on 1,946 phone photos (209 urgent). Serving applies the data pipeline's preprocessing (centre crop, Shades-of-Gray) to raw uploads.
+Deployed model (built by the CD workflow, `gs://skinsort-data-asdr/models/skinsort-triage/v3/` and `skinsort-serving:v3` in Artifact Registry): `fusion_oof_rw` — efficientnet_b3 image features + the 6 answers, fusion head reweighted by sex × body site (Kamiran & Calders), threshold fitted out-of-fold on 1,946 phone photos (209 urgent), and per-group urgent thresholds for sex and age group (bias mitigation, used when the intake sends sex / age). Serving applies the data pipeline's preprocessing (centre crop, Shades-of-Gray) to raw uploads. Proof of the CD runs, GCS versions and image tags: [docs/model_pipeline_evidence.md](docs/model_pipeline_evidence.md).
 
-| | Main test (dermoscopy, image model) | Phone test (`pad_test`, fusion_oof_rw) |
-|---|---|---|
-| Urgent recall at tau | 0.873 (target 0.90) | 0.743 (target 0.85) |
-| Calibration error | 0.031 ✅ | 0.021 ✅ |
-| Urgent AUC | 0.934 | 0.694 |
+| | Main test (dermoscopy, image model) | Phone test (`pad_test`), one threshold | Phone test, as deployed (per-group thresholds) |
+|---|---|---|---|
+| Urgent recall | 0.873 (target 0.90) | 0.743 (target 0.85) | **0.857** (target 0.85) ✅ |
+| Photos flagged | 32% | 49% | 61% |
+| Calibration error | 0.031 ✅ | 0.021 ✅ | 0.021 ✅ |
+| Urgent AUC | 0.934 | 0.694 | 0.694 |
 
-Bias (out-of-fold phone photos): reweighing closes the acral and skin-tone gaps; the sex gap (0.069) closes to 0.039 with a lower threshold for women, which needs sex in the intake form. Known limits: `pad_test` has 34 SCC and 1 melanoma among its 35 urgent photos; the model leans on missing-answer patterns from how PAD-UFES-20 was collected (recall ≈ 0.80 on fully answered photos). Charts: [docs/figures](docs/figures/README.md).
+Bias (out-of-fold phone photos, Fairlearn slicing by sex, age group, body site, skin tone): with one threshold the sex gap is 0.069 (limit 0.05, FAIL); as deployed all four slices pass (sex 0.012, age 0.038, body site 0.045, skin tone 0.039), at the cost of flagging 62% of photos instead of 52%. Known limits: `pad_test` has 34 SCC and 1 melanoma among its 35 urgent photos; the model leans on missing-answer patterns from how PAD-UFES-20 was collected (recall ≈ 0.80 on fully answered photos). Charts: [docs/figures](docs/figures/README.md).
 
 ---
 
@@ -228,7 +229,7 @@ The root `docker-compose.yml` (web app, inference service, monitoring) and root 
 ### Tests
 
 ```bash
-pytest tests/                       # model pipeline (63+ tests, synthetic data)
+pytest tests/                       # model pipeline (75 tests, synthetic data)
 flake8 src tests
 (cd Data-Pipeline && pytest)        # data pipeline
 ```
@@ -254,12 +255,12 @@ flowchart TD
 **Model releases** (`.github/workflows/model-pipeline-ci.yml` for tests, `model-pipeline-cd.yml` for the GCP pipeline)
 
 1. Every push / PR touching model code: unit tests (`pytest tests/`).
-2. After CI passes on `main` (or a manual run; skipped if GCP secrets are not set), `model-pipeline-cd.yml`: pull the DVC data and the GPU-trained backbone from GCS, then `python -m src.training.pipeline`: out-of-fold training of the phone model → bias check + mitigation → model selection → registry gate on validation metrics (AUC ≥ 0.75, calibration ≤ 0.05).
+2. After CI passes on `main` (or a manual run; skipped if GCP secrets are not set), `model-pipeline-cd.yml` logs in to GCP without a key (Workload Identity Federation, as the data pipeline's service account `skinsort-pipeline`, only for this repository), then: pull the DVC data and the GPU-trained backbone from GCS, then `python -m src.training.pipeline`: out-of-fold training of the phone model → bias check on the model as deployed (per-group thresholds) → model selection → registry gate on validation metrics (AUC ≥ 0.75, calibration ≤ 0.05).
 3. Compare with the deployed model (`gs://.../skinsort-triage/latest.json`, validation AUC may not drop more than 0.01); if the new one is worse nothing is pushed, so the deployed version stays. Manual rollback: `python -m src.training.registry rollback-gcs`.
-4. A bias gap above `bias.max_recall_gap` sends an alert to Slack (`#pipeline-alerts`, same webhook as the data pipeline).
+4. A bias gap above `bias.max_recall_gap` sends an alert to Slack (`#pipeline-alerts`, the same channel as the data pipeline alerts, posted by the "SkinSort Model Pipeline" Slack app).
 5. Push the model to GCS (versioned) and the serving image to Artifact Registry; Slack message on success or failure (optional email copy).
 
-Image backbones need a GPU and are trained on the GCP VM, not in GitHub Actions. With branch protection on `main` (merges only through a reviewed pull request), no model reaches production without human sign-off.
+Live since 2026-11-15: three green CD runs on `main` deployed v1–v3 ([evidence](docs/model_pipeline_evidence.md)). Image backbones need a GPU and are trained on the GCP VM, not in GitHub Actions; the CD downloads them from `gs://skinsort-data-asdr/models/backbones/`. With branch protection on `main` (merges only through a reviewed pull request), no model reaches production without human sign-off.
 
 ---
 
