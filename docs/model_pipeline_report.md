@@ -13,7 +13,8 @@ image backbone on dermoscopy photos and adds the patient's 6 questionnaire answe
 `P(urgent)`, picks a threshold tau for a recall target, checks and mitigates bias by slice, and selects the model
 after the bias check. It then registers the model with a validation gate and serves it from a Docker image.
 
-**Production model:** `skinsort-triage` v3 = `fusion_oof_rw`.
+**Deployed model:** `fusion_oof_rw`, built and pushed by the CD workflow on `main` (GCS `skinsort-triage/v3`, image
+`skinsort-serving:v3`; proof in [model_pipeline_evidence.md](model_pipeline_evidence.md)).
 - Inputs: efficientnet_b3 image features plus the answers.
 - Fusion head trained with Kamiran & Calders reweighing by sex × body site.
 - Calibration and tau 0.076 fitted out-of-fold on 1,946 phone photos (209 urgent).
@@ -353,8 +354,12 @@ The registry code is `src/training/registry.py` plus `src/serving/triage_model.p
   re-tagging it.
 
 **Current state.**
-- v3 = fusion_oof_rw = Production: validation AUC 0.769 vs v2's 0.774, inside the 0.01 tolerance.
-- v2 = previous; v1 = archived. v1 and v2 are both fusion_oof.
+- Local MLflow registry (development): v3 = fusion_oof_rw = Production (validation AUC 0.769 vs v2's 0.774, inside
+  the 0.01 tolerance); v2 = previous; v1 = archived (v1 and v2 are both fusion_oof). A backup of this `mlflow.db` and
+  `mlruns/` is in `gs://skinsort-data-asdr/mlflow/`.
+- GCP (deployment): each CD run registers the model in the runner's MLflow registry (kept as a run artifact) and pushes
+  it to GCS with its own version number. v1 (one threshold), v2 and v3 (per-group thresholds, bias PASS) are in
+  `gs://skinsort-data-asdr/models/skinsort-triage/`; `latest.json` points at v3.
 
 **GCP push.**
 - `registry push` copies Production to `gs://skinsort-data-asdr/models/skinsort-triage/v<N>/` with
@@ -362,8 +367,8 @@ The registry code is `src/training/registry.py` plus `src/serving/triage_model.p
   as in course Github_Labs/Lab4).
 - GCS numbering is its own, so CI runners with a fresh MLflow registry never collide.
 - CI pushes the serving image to Artifact Registry with the same number.
-- **Status:** the first CD run on `main` (2026-11-15) pushed v1 to GCS and `skinsort-serving:v1` to Artifact
-  Registry. That run used one threshold (bias FAIL alert); the next run ships the per-group thresholds.
+- **Status:** done by CD. v1 (2026-11-15, one threshold, bias FAIL alert), v2 and v3 (per-group thresholds, bias
+  PASS) are in GCS, with `skinsort-serving:v1`–`v3` and `latest` in Artifact Registry.
 
 ## 9. CI/CD (PDF §7)
 
@@ -382,10 +387,20 @@ Two workflows, modelled on the course `ci_cd_pipeline.yml`: `.github/workflows/m
 GCP login is keyless (Workload Identity Federation): GitHub proves which repository is running and Google lets only this repository act as the data pipeline's service account `skinsort-pipeline`, so no JSON key exists to leak. Without the `GCP_WORKLOAD_IDENTITY_PROVIDER` / `GCP_SERVICE_ACCOUNT` secrets, the CD pipeline job is skipped with a notice instead of failing; pull requests only show the CI test runs. Reports, `mlflow.db`
 and `mlruns/` are kept as run artifacts.
 
-**Status.** CI runs on pull request #4 and passes (lint + 71 tests). CD has not run yet (it starts once the file is on `main`). It needs:
-- the merge to `main`
-- the one-time keyless setup below (project owner), then the secrets `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT`, `GCP_PROJECT_ID`, `SLACK_WEBHOOK_URL` (optional email: `ALERT_EMAIL_TO`, `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`)
-- done on 2026-11-15: Artifact Registry repository `skinsort` (us-central1); the three backbones in `gs://skinsort-data-asdr/models/backbones/<name>/best.pt`; a backup of `mlflow.db` and `mlruns/` in `gs://skinsort-data-asdr/mlflow/` (checksums match the local files)
+**Status: live.** CI (lint + 75 tests) passes on `main`. Three CD runs on `main` passed end to end (links and outputs
+in [model_pipeline_evidence.md](model_pipeline_evidence.md)):
+
+| Run | Trigger | Bias check | Deployed | Slack |
+|---|---|---|---|---|
+| 2026-11-15 | merge of PR #4 | FAIL (sex, one threshold) → bias alert | GCS v1, `skinsort-serving:v1` | not delivered (wrong secret value) |
+| 2026-11-16 | merge of PR #7 (bias fix) | PASS (per-group thresholds) | GCS v2, `skinsort-serving:v2` | not delivered (secret fixed during the run) |
+| 2026-11-16 | manual (`workflow_dispatch`) | PASS | GCS v3, `skinsort-serving:v3` + `latest` | ✅ success message in `#pipeline-alerts` |
+
+Secrets used: `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT`, `GCP_PROJECT_ID`, `SLACK_WEBHOOK_URL` (optional
+email: `ALERT_EMAIL_TO`, `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`). One-time GCP setup done on 2026-11-15:
+Artifact Registry repository `skinsort` (us-central1); the three backbones in
+`gs://skinsort-data-asdr/models/backbones/<name>/best.pt`; a backup of `mlflow.db` and `mlruns/` in
+`gs://skinsort-data-asdr/mlflow/` (checksums match the local files).
 
 One-time keyless setup (project owner):
 ```bash
@@ -444,6 +459,6 @@ docker compose -f docker/docker-compose.yml up --build
    - The data pipeline's `sample_weights.csv` was never pushed to DVC; the model computes the same weights itself.
 4. **Portability.** `mlflow.db` and the `outputs/` JSON files hold absolute paths of this laptop. A shared MLflow
    server or a GCS artifact root would fix that.
-5. **Slack:** the CD run's Slack messages were not delivered (the `SLACK_WEBHOOK_URL` secret was not an incoming
-   webhook URL); fixed by setting the secret, no code change.
+5. **Slack:** fixed. The first two CD runs could not post (the secret held a workspace invite link); the third run's
+   success message was delivered.
 6. **Product:** a photo-quality check in the intake (see the robustness results).
